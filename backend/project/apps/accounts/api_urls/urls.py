@@ -14,7 +14,6 @@ urlpatterns = [
         RegisterBroadcasterView.as_view(),
         name="register-broadcaster",
     ),
-    path("login/", TokenObtainPairView.as_view(), name="token-obtain-pair"),
     path("refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     path("me/", CurrentUserView.as_view(), name="auth-me"),
 ]
