@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from apps.bidding.models import AuctionResult, Bid, Refund
+from apps.bidding.models import AuctionResult, Bid, Creative, Refund
 
 
 # ---------------------------------------------------------------------------
@@ -9,9 +9,12 @@ from apps.bidding.models import AuctionResult, Bid, Refund
 # ---------------------------------------------------------------------------
 
 def _badge(text: str, fg: str, bg: str) -> str:
-    return (
-        f'<span style="background:{bg};color:{fg};padding:1px 7px;'
-        f'border-radius:3px;font-size:11px;font-weight:500;">{text}</span>'
+    return format_html(
+        '<span style="background:{};color:{};padding:1px 7px;'
+        'border-radius:3px;font-size:11px;font-weight:500;">{}</span>',
+        bg,
+        fg,
+        text,
     )
 
 
@@ -60,10 +63,75 @@ def _tx_chip(tx_hash: str) -> str:
     if not tx_hash:
         return "—"
     short = f"{tx_hash[:8]}…{tx_hash[-6:]}"
-    return (
-        f'<code style="background:#f8fafc;color:#475569;padding:2px 6px;'
-        f'border-radius:3px;font-size:11px;border:1px solid #e2e8f0;">{short}</code>'
+    return format_html(
+        '<code style="background:#f8fafc;color:#475569;padding:2px 6px;'
+        'border-radius:3px;font-size:11px;border:1px solid #e2e8f0;">{}</code>',
+        short,
     )
+
+
+# ---------------------------------------------------------------------------
+# Creative
+# ---------------------------------------------------------------------------
+
+@admin.register(Creative)
+class CreativeAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "title",
+        "brand",
+        "status_badge",
+        "ad_link",
+        "created_at",
+    )
+    list_display_links = ("id", "title")
+    list_filter = ("status", "brand")
+    search_fields = ("title", "brand__name", "ad_url")
+    list_select_related = ("brand",)
+    list_per_page = 25
+    ordering = ("-created_at",)
+    readonly_fields = ("created_at", "updated_at")
+    actions = ("approve_creatives", "reject_creatives")
+
+    fieldsets = (
+        ("Creative", {
+            "fields": ("brand", "title", "description", "ad_url"),
+        }),
+        ("Review", {
+            "fields": ("status", "rejection_reason"),
+        }),
+        ("Timestamps", {
+            "fields": ("created_at", "updated_at"),
+            "classes": ("collapse",),
+        }),
+    )
+
+    def approve_creatives(self, request, queryset):
+        queryset.update(status=Creative.Status.APPROVED, rejection_reason="")
+        self.message_user(request, f"{queryset.count()} creatives approved.")
+    approve_creatives.short_description = "Approve selected creatives"
+
+    def reject_creatives(self, request, queryset):
+        queryset.update(status=Creative.Status.REJECTED)
+        self.message_user(request, f"{queryset.count()} creatives rejected.")
+    reject_creatives.short_description = "Reject selected creatives"
+
+    def status_badge(self, obj: Creative) -> str:
+        style = {
+            Creative.Status.PENDING:  _AMBER,
+            Creative.Status.APPROVED: _GREEN,
+            Creative.Status.REJECTED: _RED,
+        }
+        fg, bg = style.get(obj.status, _GREY)
+        return _badge(obj.get_status_display(), fg, bg)
+    status_badge.short_description = "Status"
+
+    def ad_link(self, obj: Creative) -> str:
+        return format_html(
+            '<a href="{}" target="_blank" style="font-size:11px;color:#1d4ed8;">View Ad</a>',
+            obj.ad_url,
+        )
+    ad_link.short_description = "Ad URL"
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +160,7 @@ class BidAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ("Bid", {
-            "fields": ("match", "brand", "event_type", "amount", "creative_ref"),
+            "fields": ("match", "brand", "event_type", "amount", "creative"),
         }),
         ("Blockchain", {
             "fields": ("tx_hash", "is_settled"),
@@ -106,7 +174,7 @@ class BidAdmin(admin.ModelAdmin):
     def event_chip(self, obj: Bid) -> str:
         name = _EVENT_NAMES.get(obj.event_type, str(obj.event_type))
         fg, bg = _EVENT_STYLE.get(obj.event_type, _GREY)
-        return format_html(_badge(name, fg, bg))
+        return _badge(name, fg, bg)
     event_chip.short_description = "Event"
 
     def amount_display(self, obj: Bid) -> str:
@@ -118,12 +186,12 @@ class BidAdmin(admin.ModelAdmin):
 
     def settled_badge(self, obj: Bid) -> str:
         if obj.is_settled:
-            return format_html(_badge("Settled", *_GREEN))
-        return format_html(_badge("Active", *_AMBER))
+            return _badge("Settled", *_GREEN)
+        return _badge("Active", *_AMBER)
     settled_badge.short_description = "Status"
 
     def tx_chip(self, obj: Bid) -> str:
-        return format_html(_tx_chip(obj.tx_hash))
+        return _tx_chip(obj.tx_hash)
     tx_chip.short_description = "TX Hash"
 
 
@@ -171,13 +239,13 @@ class AuctionResultAdmin(admin.ModelAdmin):
     def event_chip(self, obj: AuctionResult) -> str:
         name = _EVENT_NAMES.get(obj.event_type, str(obj.event_type))
         fg, bg = _EVENT_STYLE.get(obj.event_type, _GREY)
-        return format_html(_badge(name, fg, bg))
+        return _badge(name, fg, bg)
     event_chip.short_description = "Event"
 
     def slot_badge(self, obj: AuctionResult) -> str:
         label = f"Slot {obj.slot_position}"
         fg, bg = _SLOT_STYLE.get(obj.slot_position, _GREY)
-        return format_html(_badge(label, fg, bg))
+        return _badge(label, fg, bg)
     slot_badge.short_description = "Slot"
 
     def amount_display(self, obj: AuctionResult) -> str:
@@ -188,7 +256,7 @@ class AuctionResultAdmin(admin.ModelAdmin):
     amount_display.short_description = "Amount"
 
     def tx_chip(self, obj: AuctionResult) -> str:
-        return format_html(_tx_chip(obj.tx_hash))
+        return _tx_chip(obj.tx_hash)
     tx_chip.short_description = "TX Hash"
 
 
@@ -245,5 +313,5 @@ class RefundAdmin(admin.ModelAdmin):
     fee_display.short_description = "Fee Deducted"
 
     def tx_chip(self, obj: Refund) -> str:
-        return format_html(_tx_chip(obj.tx_hash))
+        return _tx_chip(obj.tx_hash)
     tx_chip.short_description = "TX Hash"

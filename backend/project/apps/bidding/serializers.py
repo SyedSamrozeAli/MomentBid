@@ -4,7 +4,69 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from apps.bidding.models import AuctionResult, Bid, Refund
+from apps.bidding.models import AuctionResult, Bid, Creative, Refund
+from apps.matches.models import MatchEventConfig
+
+
+def _event_type_label(event_type: int) -> str:
+    try:
+        return MatchEventConfig.EventType(event_type).label
+    except ValueError:
+        return str(event_type)
+
+
+# ---------------------------------------------------------------------------
+# Creative
+# ---------------------------------------------------------------------------
+
+
+class CreativeSerializer(serializers.ModelSerializer):
+    brand = serializers.CharField(source="brand.name", read_only=True)
+
+    class Meta:
+        model = Creative
+        fields = (
+            "id",
+            "brand",
+            "title",
+            "description",
+            "ad_url",
+            "status",
+            "rejection_reason",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "brand",
+            "status",
+            "rejection_reason",
+            "created_at",
+            "updated_at",
+        )
+
+
+class CreativeCreateSerializer(serializers.Serializer):
+    title = serializers.CharField(
+        max_length=255,
+        error_messages={
+            "required": "Title is required.",
+            "blank": "Title cannot be empty.",
+        },
+    )
+    description = serializers.CharField(required=False, allow_blank=True, default="")
+    ad_url = serializers.URLField(
+        max_length=500,
+        error_messages={
+            "required": "Ad URL is required.",
+            "invalid": "Enter a valid URL.",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bid
+# ---------------------------------------------------------------------------
 
 
 class BidCreateSerializer(serializers.Serializer):
@@ -29,12 +91,10 @@ class BidCreateSerializer(serializers.Serializer):
             "max_digits": "Bid amount is too large.",
         },
     )
-    creative_ref = serializers.CharField(
-        max_length=500,
+    creative_id = serializers.IntegerField(
         error_messages={
-            "required": "Creative reference is required.",
-            "blank": "Creative reference cannot be empty.",
-            "max_length": "Creative reference must be 500 characters or fewer.",
+            "required": "Creative ID is required.",
+            "invalid": "Creative ID must be a valid integer.",
         },
     )
 
@@ -67,8 +127,26 @@ class BudgetCapSerializer(serializers.Serializer):
     )
 
 
-class BidSerializer(serializers.ModelSerializer):
+class BidListSerializer(serializers.ModelSerializer):
+    """Minimal bid info for leaderboards and lists."""
+
     brand = serializers.CharField(source="brand.name", read_only=True)
+    event_type_label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Bid
+        fields = ("id", "brand", "amount", "is_settled", "event_type_label", "created_at")
+
+    def get_event_type_label(self, obj: Bid) -> str:
+        return _event_type_label(obj.event_type)
+
+
+class BidDetailedSerializer(serializers.ModelSerializer):
+    """Full bid details with creative info and blockchain hash."""
+
+    brand = serializers.CharField(source="brand.name", read_only=True)
+    creative = CreativeSerializer(read_only=True)
+    event_type_label = serializers.SerializerMethodField()
 
     class Meta:
         model = Bid
@@ -76,22 +154,32 @@ class BidSerializer(serializers.ModelSerializer):
             "id",
             "brand",
             "event_type",
+            "event_type_label",
             "amount",
-            "creative_ref",
+            "creative",
             "tx_hash",
             "is_settled",
             "created_at",
         )
 
+    def get_event_type_label(self, obj: Bid) -> str:
+        return _event_type_label(obj.event_type)
+
+
+# Alias for backwards compat
+BidSerializer = BidDetailedSerializer
+
 
 class AuctionResultSerializer(serializers.ModelSerializer):
     winner = serializers.CharField(source="winner.name", read_only=True)
+    event_type_label = serializers.SerializerMethodField()
 
     class Meta:
         model = AuctionResult
         fields = (
             "id",
             "event_type",
+            "event_type_label",
             "trigger_number",
             "slot_position",
             "winner",
@@ -100,6 +188,9 @@ class AuctionResultSerializer(serializers.ModelSerializer):
             "tx_hash",
             "created_at",
         )
+
+    def get_event_type_label(self, obj: AuctionResult) -> str:
+        return _event_type_label(obj.event_type)
 
 
 class RefundSerializer(serializers.ModelSerializer):
