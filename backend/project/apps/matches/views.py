@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import User
 from apps.accounts.permissions import IsAdminRole, IsBroadcasterUser
-from apps.bidding.models import Bid
+from apps.bidding.models import AuctionResult, Bid
 from apps.blockchain import get_blockchain_service
 from apps.indexer.push import push_match_event
 from apps.matches.models import ExclusionGroup, Match, MatchEventConfig
@@ -66,7 +66,9 @@ class MatchListCreateView(APIView):
                 broadcaster.decrypt_private_key()
             )
             if tx_result.success:
-                match.on_chain_match_id = int(tx_result.data.get("match_id", 0) or 0)
+                raw_match_id = tx_result.data.get("match_id")
+                if raw_match_id is not None:
+                    match.on_chain_match_id = int(raw_match_id)
                 match.create_tx_hash = tx_result.tx_hash
                 match.save(update_fields=["on_chain_match_id", "create_tx_hash"])
 
@@ -107,14 +109,26 @@ class MatchDetailView(APIView):
             ),
             pk=match_id,
         )
-        bids_summary = (
+        bids_summary_qs = (
             Bid.objects.filter(match=match)
             .values("event_type")
             .annotate(total_amount=Sum("amount"), bid_count=Count("id"))
         )
 
-        payload = MatchSerializer(match).data
-        payload["bids_summary"] = list(bids_summary)
+        event_type_labels = {
+            value: label for value, label in MatchEventConfig.EventType.choices
+        }
+        bids_summary = [
+            {
+                **summary,
+                "event_type_label": event_type_labels.get(
+                    summary["event_type"], str(summary["event_type"])
+                ),
+            }
+            for summary in bids_summary_qs
+        ]
+
+        payload = {**MatchSerializer(match).data, "bids_summary": bids_summary}
         return CustomResponse.success(data=payload)
 
 
@@ -289,6 +303,16 @@ class ExclusionGroupListCreateView(APIView):
 
 class ExclusionGroupDetailView(APIView):
     permission_classes = [IsBroadcasterUser]
+
+    def get(self, request, group_id: int):
+        group = get_object_or_404(
+            ExclusionGroup.objects.select_related("broadcaster").prefetch_related(
+                "members__brand"
+            ),
+            pk=group_id,
+            broadcaster=request.user.broadcaster,
+        )
+        return CustomResponse.success(data=ExclusionGroupSerializer(group).data)
 
     def patch(self, request, group_id: int):
         group = get_object_or_404(
@@ -508,21 +532,57 @@ class SimulatorTriggerEventView(APIView):
         event_config.save(update_fields=["trigger_count"])
 
         trigger_number = event_config.trigger_count
+        winning_bids = list(
+            Bid.objects.select_related("brand", "creative")
+            .filter(match=match, event_type=event_type)
+            .order_by("-amount", "created_at", "id")[: event_config.slot_count]
+        )
+
+        if winning_bids:
+            AuctionResult.objects.bulk_create(
+                [
+                    AuctionResult(
+                        match=match,
+                        event_type=event_type,
+                        trigger_number=trigger_number,
+                        slot_position=position,
+                        winner=bid.brand,
+                        amount=bid.amount,
+                        creative_ref=(bid.creative.ad_url if bid.creative else ""),
+                        tx_hash=tx_result.tx_hash or "",
+                    )
+                    for position, bid in enumerate(winning_bids, start=1)
+                ]
+            )
+
+            Bid.objects.filter(
+                id__in=[bid.id for bid in winning_bids], is_settled=False
+            ).update(is_settled=True)
+
+        slots_filled = len(winning_bids)
         push_match_event(
             match.id,
             "auction_settled",
             {
                 "event_type": event_type,
                 "trigger_number": trigger_number,
+                "slots_filled": slots_filled,
                 "tx_hash": tx_result.tx_hash,
             },
         )
+
+        try:
+            event_type_label = MatchEventConfig.EventType(event_type).label
+        except ValueError:
+            event_type_label = str(event_type)
 
         return CustomResponse.success(
             data={
                 "tx_hash": tx_result.tx_hash,
                 "event_type": event_type,
+                "event_type_label": event_type_label,
                 "trigger_number": trigger_number,
+                "slots_filled": slots_filled,
             },
             message="Event triggered",
         )

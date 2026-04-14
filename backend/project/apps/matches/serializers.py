@@ -35,16 +35,22 @@ class MatchCreateSerializer(serializers.ModelSerializer):
             "max_length": "Venue must be 200 characters or fewer.",
         },
     )
-    match_date = serializers.DateTimeField(
+    match_date = serializers.DateField(
         error_messages={
             "required": "Match date is required.",
-            "invalid": "Match date must be a valid date and time.",
+            "invalid": "Match date must be a valid date.",
+        },
+    )
+    match_time = serializers.TimeField(
+        error_messages={
+            "required": "Match time is required.",
+            "invalid": "Match time must be a valid time.",
         },
     )
 
     class Meta:
         model = Match
-        fields = ("team_a", "team_b", "venue", "match_date")
+        fields = ("team_a", "team_b", "venue", "match_date", "match_time")
 
 
 class MatchEventConfigCreateSerializer(serializers.ModelSerializer):
@@ -110,17 +116,26 @@ class MatchEventConfigCreateSerializer(serializers.ModelSerializer):
 
 
 class MatchEventConfigSerializer(serializers.ModelSerializer):
+    event_type_label = serializers.SerializerMethodField()
+
     class Meta:
         model = MatchEventConfig
         fields = (
             "id",
             "event_type",
+            "event_type_label",
             "reserve_price",
             "reservation_fee_pct",
             "slot_count",
             "max_triggers",
             "trigger_count",
         )
+
+    def get_event_type_label(self, obj: MatchEventConfig) -> str:
+        try:
+            return MatchEventConfig.EventType(obj.event_type).label
+        except ValueError:
+            return str(obj.event_type)
 
 
 class MatchSerializer(serializers.ModelSerializer):
@@ -138,6 +153,7 @@ class MatchSerializer(serializers.ModelSerializer):
             "team_b",
             "venue",
             "match_date",
+            "match_time",
             "state",
             "state_label",
             "create_tx_hash",
