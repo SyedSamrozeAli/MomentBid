@@ -8,10 +8,14 @@ from apps.wallets.models import Deposit, Transaction
 # Design tokens — light-bg badges, consistent radius, no emojis
 # ---------------------------------------------------------------------------
 
+
 def _badge(text: str, fg: str, bg: str) -> str:
-    return (
-        f'<span style="background:{bg};color:{fg};padding:1px 7px;'
-        f'border-radius:3px;font-size:11px;font-weight:500;">{text}</span>'
+    return format_html(
+        '<span style="background:{};color:{};padding:1px 7px;'
+        'border-radius:3px;font-size:11px;font-weight:500;">{}</span>',
+        bg,
+        fg,
+        text,
     )
 
 
@@ -23,23 +27,24 @@ def _tx_chip(tx_hash: str) -> str:
     if not tx_hash:
         return "—"
     short = f"{tx_hash[:8]}…{tx_hash[-6:]}"
-    return (
-        f'<code style="background:#f8fafc;color:#475569;padding:2px 6px;'
-        f'border-radius:3px;font-size:11px;border:1px solid #e2e8f0;">{short}</code>'
+    return format_html(
+        '<code style="background:#f8fafc;color:#475569;padding:2px 6px;'
+        'border-radius:3px;font-size:11px;border:1px solid #e2e8f0;">{}</code>',
+        short,
     )
 
 
-_GREEN  = ("#166534", "#dcfce7")
-_AMBER  = ("#854d0e", "#fef9c3")
-_RED    = ("#991b1b", "#fee2e2")
-_BLUE   = ("#1d4ed8", "#dbeafe")
+_GREEN = ("#166534", "#dcfce7")
+_AMBER = ("#854d0e", "#fef9c3")
+_RED = ("#991b1b", "#fee2e2")
+_BLUE = ("#1d4ed8", "#dbeafe")
 _PURPLE = ("#5b21b6", "#ede9fe")
-_GREY   = ("#374151", "#f3f4f6")
+_GREY = ("#374151", "#f3f4f6")
 
 _STATUS_STYLE: dict[str, tuple[str, str]] = {
-    "pending":   _AMBER,
+    "pending": _AMBER,
     "confirmed": _GREEN,
-    "failed":    _RED,
+    "failed": _RED,
 }
 
 # Semantic action grouping:
@@ -48,22 +53,23 @@ _STATUS_STYLE: dict[str, tuple[str, str]] = {
 #   match lifecycle       → purple
 #   refund / claim        → amber
 _ACTION_STYLE: dict[str, tuple[str, str]] = {
-    "mint":            _GREEN,
-    "approve":         _GREEN,
-    "place_bid":       _BLUE,
-    "increase_bid":    _BLUE,
-    "set_budget_cap":  _BLUE,
-    "create_match":    _PURPLE,
+    "mint": _GREEN,
+    "approve": _GREEN,
+    "place_bid": _BLUE,
+    "increase_bid": _BLUE,
+    "set_budget_cap": _BLUE,
+    "create_match": _PURPLE,
     "configure_event": _PURPLE,
-    "open_bidding":    _PURPLE,
-    "trigger_event":   _AMBER,
-    "claim_refund":    _AMBER,
+    "open_bidding": _PURPLE,
+    "trigger_event": _AMBER,
+    "claim_refund": _AMBER,
 }
 
 
 # ---------------------------------------------------------------------------
 # Deposit
 # ---------------------------------------------------------------------------
+
 
 @admin.register(Deposit)
 class DepositAdmin(admin.ModelAdmin):
@@ -85,16 +91,25 @@ class DepositAdmin(admin.ModelAdmin):
     readonly_fields = ("tx_hash", "status", "created_at")
 
     fieldsets = (
-        ("Deposit", {
-            "fields": ("brand", "amount_pkr"),
-        }),
-        ("Blockchain", {
-            "fields": ("tx_hash", "status"),
-        }),
-        ("Timestamps", {
-            "fields": ("created_at",),
-            "classes": ("collapse",),
-        }),
+        (
+            "Deposit",
+            {
+                "fields": ("brand", "amount_pkr"),
+            },
+        ),
+        (
+            "Blockchain",
+            {
+                "fields": ("tx_hash", "status"),
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at",),
+                "classes": ("collapse",),
+            },
+        ),
     )
 
     def amount_display(self, obj: Deposit) -> str:
@@ -102,21 +117,25 @@ class DepositAdmin(admin.ModelAdmin):
             '<span style="font-weight:600;color:#166534;">{}</span>',
             _pkr(obj.amount_pkr),
         )
+
     amount_display.short_description = "Amount"
 
     def status_badge(self, obj: Deposit) -> str:
         fg, bg = _STATUS_STYLE.get(obj.status, _GREY)
-        return format_html(_badge(obj.status.capitalize(), fg, bg))
+        return _badge(obj.status.capitalize(), fg, bg)
+
     status_badge.short_description = "Status"
 
     def tx_chip(self, obj: Deposit) -> str:
-        return format_html(_tx_chip(obj.tx_hash))
+        return _tx_chip(obj.tx_hash)
+
     tx_chip.short_description = "TX Hash"
 
 
 # ---------------------------------------------------------------------------
 # Transaction
 # ---------------------------------------------------------------------------
+
 
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
@@ -147,43 +166,56 @@ class TransactionAdmin(admin.ModelAdmin):
     )
 
     fieldsets = (
-        ("Transaction", {
-            "fields": ("action", "brand", "broadcaster", "initiated_by"),
-        }),
-        ("Blockchain", {
-            "fields": ("tx_hash", "status", "gas_used", "error_message"),
-        }),
-        ("Metadata", {
-            "fields": ("metadata",),
-            "classes": ("collapse",),
-        }),
-        ("Timestamps", {
-            "fields": ("created_at",),
-            "classes": ("collapse",),
-        }),
+        (
+            "Transaction",
+            {
+                "fields": ("action", "brand", "broadcaster", "initiated_by"),
+            },
+        ),
+        (
+            "Blockchain",
+            {
+                "fields": ("tx_hash", "status", "gas_used", "error_message"),
+            },
+        ),
+        (
+            "Metadata",
+            {
+                "fields": ("metadata",),
+                "classes": ("collapse",),
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at",),
+                "classes": ("collapse",),
+            },
+        ),
     )
 
     def action_badge(self, obj: Transaction) -> str:
         fg, bg = _ACTION_STYLE.get(obj.action, _GREY)
         label = obj.action.replace("_", " ").title()
-        return format_html(_badge(label, fg, bg))
+        return _badge(label, fg, bg)
+
     action_badge.short_description = "Action"
 
     def status_badge(self, obj: Transaction) -> str:
         fg, bg = _STATUS_STYLE.get(obj.status, _GREY)
-        return format_html(_badge(obj.status.capitalize(), fg, bg))
+        return _badge(obj.status.capitalize(), fg, bg)
+
     status_badge.short_description = "Status"
 
     def actor(self, obj: Transaction) -> str:
         if obj.brand:
-            return format_html(
-                '<span style="color:#1d4ed8;">{}</span>', obj.brand.name
-            )
+            return format_html('<span style="color:#1d4ed8;">{}</span>', obj.brand.name)
         if obj.broadcaster:
             return format_html(
                 '<span style="color:#5b21b6;">{}</span>', obj.broadcaster.name
             )
-        return format_html('<span style="color:#9ca3af;">—</span>')
+        return format_html('<span style="color:#9ca3af;">{}</span>', "—")
+
     actor.short_description = "Actor"
 
     def amount_display(self, obj: Transaction) -> str:
@@ -196,7 +228,8 @@ class TransactionAdmin(admin.ModelAdmin):
                 )
             except (ValueError, TypeError):
                 pass
-        return format_html('<span style="color:#9ca3af;">—</span>')
+        return format_html('<span style="color:#9ca3af;">{}</span>', "—")
+
     amount_display.short_description = "Amount"
 
     def gas_display(self, obj: Transaction) -> str:
@@ -205,9 +238,11 @@ class TransactionAdmin(admin.ModelAdmin):
                 '<span style="font-size:11px;color:#6b7280;">{:,}</span>',
                 obj.gas_used,
             )
-        return format_html('<span style="color:#9ca3af;">—</span>')
+        return format_html('<span style="color:#9ca3af;">{}</span>', "—")
+
     gas_display.short_description = "Gas Used"
 
     def tx_chip(self, obj: Transaction) -> str:
-        return format_html(_tx_chip(obj.tx_hash))
+        return _tx_chip(obj.tx_hash)
+
     tx_chip.short_description = "TX Hash"

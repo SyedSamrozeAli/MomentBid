@@ -4,6 +4,7 @@ import hashlib
 import itertools
 from collections.abc import Iterable
 
+from django.db.models import Max
 from eth_account import Account
 
 from apps.blockchain.service import BlockchainServiceBase, TxResult
@@ -114,7 +115,21 @@ class MockBlockchainService(BlockchainServiceBase):
 
     def create_match(self, broadcaster_key: str) -> TxResult:
         broadcaster_address = self._address_from_private_key(broadcaster_key)
-        match_id = next(self._match_id_counter)
+        # Keep IDs unique across app restarts by syncing with persisted DB records.
+        from apps.matches.models import Match
+
+        database_max_match_id = (
+            Match.objects.exclude(on_chain_match_id__isnull=True).aggregate(
+                max_id=Max("on_chain_match_id")
+            )["max_id"]
+            or 0
+        )
+        counter_match_id = next(self._match_id_counter)
+        match_id = max(counter_match_id, int(database_max_match_id) + 1)
+
+        if match_id > counter_match_id:
+            self._match_id_counter = itertools.count(start=match_id + 1)
+
         self._match_states[match_id] = 0
         return TxResult(
             success=True,

@@ -77,6 +77,32 @@ class BalanceView(APIView):
     permission_classes = [IsBrandUser]
 
     def get(self, request):
-        blockchain_service = get_blockchain_service()
-        balance = blockchain_service.get_mbt_balance(request.user.brand.wallet_address)
+        from django.db.models import Sum
+
+        from apps.bidding.models import Bid, Refund
+
+        brand = request.user.brand
+        total_deposited = (
+            Deposit.objects.filter(brand=brand, status="confirmed").aggregate(
+                total=Sum("amount_pkr")
+            )["total"]
+            or 0
+        )
+        escrowed = (
+            Bid.objects.filter(brand=brand, is_settled=False).aggregate(
+                total=Sum("amount")
+            )["total"]
+            or 0
+        )
+        spent = (
+            Bid.objects.filter(brand=brand, is_settled=True).aggregate(
+                total=Sum("amount")
+            )["total"]
+            or 0
+        )
+        refunded = (
+            Refund.objects.filter(brand=brand).aggregate(total=Sum("amount"))["total"]
+            or 0
+        )
+        balance = int(total_deposited - escrowed - spent + refunded)
         return CustomResponse.success(data={"balance_pkr": balance})

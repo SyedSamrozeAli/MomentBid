@@ -18,6 +18,7 @@ env = environ.Env(
     BLOCKCHAIN_CHAIN_ID=(int, 31337),
     BLOCKCHAIN_RPC_URL=(str, "http://127.0.0.1:8545"),
     REDIS_URL=(str, "redis://127.0.0.1:6379/1"),
+    RABBITMQ_URL=(str, "amqp://guest:guest@localhost:5672//"),
 )
 environ.Env.read_env(ROOT_DIR / ".env")
 
@@ -91,6 +92,19 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
+# Channel Layers with RabbitMQ
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_rabbitmq.core.RabbitmqChannelLayer",
+        "CONFIG": {
+            "host": "amqp://guest:guest@localhost:5672/",
+            # Optional: adjust expiry (default 60s) or capacity
+            "expiry": 60,
+            "local_capacity": 100,
+        },
+    }
+}
+
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
@@ -141,7 +155,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = ROOT_DIR / "data"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -155,7 +171,7 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
@@ -164,16 +180,6 @@ SIMPLE_JWT = {
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 if not CORS_ALLOW_ALL_ORIGINS:
     CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
-
-# Channels
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [env("REDIS_URL")],
-        },
-    }
-}
 
 # Blockchain settings
 USE_MOCK_BLOCKCHAIN = env("USE_MOCK_BLOCKCHAIN")

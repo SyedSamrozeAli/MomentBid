@@ -17,6 +17,7 @@ _UNIQUE_FIELD_MESSAGES = {
     "accounts_broadcaster.name": "This broadcaster name is already registered. Please choose a different name.",
     "accounts_user.username": "This username is already taken. Please choose a different username.",
     "accounts_user.email": "This email address is already in use. Please use a different email.",
+    "matches_match.on_chain_match_id": "A duplicate on-chain match id was generated. Please retry match creation.",
     "bidding_bid.match_id, bidding_bid.brand_id, bidding_bid.event_type": "You already have a bid for this event in this match.",
     "matches_matcheventconfig.match_id, matches_matcheventconfig.event_type": "This event type is already configured for the selected match.",
 }
