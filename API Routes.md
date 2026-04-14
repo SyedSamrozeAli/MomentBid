@@ -26,6 +26,8 @@ Register a new brand org + wallet. Returns JWT tokens.
 
 **Auth:** None
 
+**Content-Type:** `multipart/form-data` (for logo upload)
+
 **Payload:**
 ```json
 {
@@ -33,7 +35,7 @@ Register a new brand org + wallet. Returns JWT tokens.
   "password": "securepass123",
   "email": "ali@pepsi.com",
   "brand_name": "Pepsi",
-  "logo_url": "https://example.com/pepsi-logo.png"
+  "logo": "<file>"
 }
 ```
 
@@ -53,6 +55,8 @@ Register a new broadcaster org + wallet.
 
 **Auth:** None
 
+**Content-Type:** `multipart/form-data` (for logo upload)
+
 **Payload:**
 ```json
 {
@@ -60,7 +64,7 @@ Register a new broadcaster org + wallet.
   "password": "securepass123",
   "email": "admin@ptvsports.com",
   "broadcaster_name": "PTV Sports",
-  "logo_url": "https://example.com/ptv-logo.png"
+  "logo": "<file>"
 }
 ```
 
@@ -116,7 +120,8 @@ Get current user profile, org details, and wallet balance.
     "type": "brand",
     "id": 1,
     "name": "Pepsi",
-    "wallet_address": "0xABC..."
+    "wallet_address": "0xABC...",
+    "logo": "http://localhost:8000/media/brands/1/logo_20260414120500.png"
   },
   "balance": 500000
 }
@@ -134,8 +139,8 @@ List all registered brands (used by broadcaster to build exclusion groups).
 **Response:**
 ```json
 [
-  { "id": 1, "name": "Pepsi", "wallet_address": "0xABC..." },
-  { "id": 2, "name": "KFC",   "wallet_address": "0xDEF..." }
+  { "id": 1, "name": "Pepsi", "wallet_address": "0xABC...", "logo": "http://localhost:8000/media/brands/1/logo_20260414120500.png" },
+  { "id": 2, "name": "KFC",   "wallet_address": "0xDEF...", "logo": "http://localhost:8000/media/brands/2/logo_20260414120502.png" }
 ]
 ```
 
@@ -143,6 +148,56 @@ List all registered brands (used by broadcaster to build exclusion groups).
 
 ### GET `/api/broadcasters/`
 List all registered broadcasters.
+
+---
+
+## PROFILE & ORG UPDATES
+
+### PATCH `/api/auth/me/update/`
+Update the authenticated user's own profile (username, email, profile image).
+
+**Auth:** Any authenticated user
+
+**Content-Type:** `multipart/form-data`
+
+**Payload (any subset):**
+```json
+{
+  "username": "ali_pepsi_new",
+  "email": "ali_new@pepsi.com",
+  "profile_image": "<file>"
+}
+```
+
+### PATCH `/api/brands/me/`
+Update the authenticated brand owner's brand details.
+
+**Auth:** Brand owner
+
+**Content-Type:** `multipart/form-data`
+
+**Payload (any subset):**
+```json
+{
+  "name": "Pepsi Pakistan",
+  "logo": "<file>"
+}
+```
+
+### PATCH `/api/broadcasters/me/`
+Update the authenticated broadcaster owner's broadcaster details.
+
+**Auth:** Broadcaster owner
+
+**Content-Type:** `multipart/form-data`
+
+**Payload (any subset):**
+```json
+{
+  "name": "PTV Sports HD",
+  "logo": "<file>"
+}
+```
 
 **Auth:** Any authenticated user
 
@@ -250,7 +305,8 @@ Create a new match. Also registers match on-chain.
   "team_a": "Lahore Qalandars",
   "team_b": "Islamabad United",
   "venue": "Gaddafi Stadium, Lahore",
-  "match_date": "2026-04-20T19:00:00Z"
+  "match_date": "2026-04-20",
+  "match_time": "19:00:00"
 }
 ```
 
@@ -263,7 +319,8 @@ Create a new match. Also registers match on-chain.
   "team_a": "Lahore Qalandars",
   "team_b": "Islamabad United",
   "venue": "Gaddafi Stadium, Lahore",
-  "match_date": "2026-04-20T19:00:00Z",
+  "match_date": "2026-04-20",
+  "match_time": "19:00:00",
   "state": 0,
   "state_label": "Created",
   "event_configs": []
@@ -394,6 +451,31 @@ List all exclusion groups owned by the authenticated broadcaster.
 
 ---
 
+### GET `/api/exclusion-groups/{group_id}/`
+Get one exclusion group by id.
+
+**Auth:** Broadcaster user (must own the group)
+
+**Response:**
+```json
+{
+  "id": 1,
+  "name": "Cola Brands",
+  "broadcaster": "PTV Sports",
+  "separation_distance": 1,
+  "cross_event_separation": false,
+  "is_locked": false,
+  "on_chain_group_id": 1,
+  "members": [
+    { "brand_id": 1, "brand_name": "Pepsi", "wallet_address": "0xABC..." },
+    { "brand_id": 2, "brand_name": "KFC",   "wallet_address": "0xDEF..." }
+  ],
+  "created_at": "2026-04-14T10:00:00Z"
+}
+```
+
+---
+
 ### PATCH `/api/exclusion-groups/{group_id}/`
 Update group name / separation settings. Only works when group is **not locked**.
 
@@ -437,10 +519,71 @@ Remove a brand from an exclusion group. Only when group is unlocked.
 
 ---
 
+## CREATIVES
+
+Brands must upload and get approval for an ad creative **before** placing any bid. Approval is done via the Django admin panel (bulk action).
+
+### POST `/api/creatives/`
+Upload a new creative. Starts in `pending` status — must be approved by admin before use.
+
+**Auth:** Brand user
+
+**Payload:**
+```json
+{
+  "title": "Pepsi Summer 2026",
+  "description": "30-second PSL season ad",
+  "ad_url": "https://cdn.example.com/pepsi-summer-2026.mp4"
+}
+```
+
+**Response:**
+```json
+{
+  "id": 1,
+  "brand": "Pepsi",
+  "title": "Pepsi Summer 2026",
+  "description": "30-second PSL season ad",
+  "ad_url": "https://cdn.example.com/pepsi-summer-2026.mp4",
+  "status": "pending",
+  "rejection_reason": "",
+  "created_at": "2026-04-14T09:00:00Z",
+  "updated_at": "2026-04-14T09:00:00Z"
+}
+```
+
+---
+
+### GET `/api/creatives/`
+List all creatives belonging to the authenticated brand. Supports filtering and search.
+
+**Auth:** Brand user
+
+**Query params:**
+- `?status=pending|approved|rejected` — filter by approval status
+- `?search=keyword` — search creatives by title (case-insensitive)
+- `?ordering=created_at|-created_at|title|-title|status|-status` — sort by field (default: `-created_at`)
+
+**Examples:**
+- `GET /api/creatives/?status=approved` → show only approved creatives
+- `GET /api/creatives/?search=summer&ordering=title` → search for "summer" in title, sort A-Z
+- `GET /api/creatives/?status=pending` → show pending creatives awaiting admin review
+
+---
+
+### GET `/api/creatives/{creative_id}/`
+Retrieve a single creative (brand must own it).
+
+**Auth:** Brand user
+
+> **Approval flow:** After submission, an admin goes to Django Admin → Bidding → Creatives, selects the creative, and runs the **"Approve selected creatives"** action. Status changes to `approved`. Only `approved` creatives can be used in bids.
+
+---
+
 ## BIDDING
 
 ### POST `/api/matches/{match_id}/bids/`
-Place a bid on an event type. Match must be OPEN. One bid per brand per event type.
+Place a bid on an event type. Match must be OPEN. One bid per brand per event type. The creative must be pre-approved.
 
 **Auth:** Brand user
 
@@ -449,7 +592,7 @@ Place a bid on an event type. Match must be OPEN. One bid per brand per event ty
 {
   "event_type": 0,
   "amount": "300000",
-  "creative_ref": "https://cdn.example.com/pepsi-ad-v1.mp4"
+  "creative_id": 1
 }
 ```
 
@@ -459,8 +602,15 @@ Place a bid on an event type. Match must be OPEN. One bid per brand per event ty
   "id": 1,
   "brand": "Pepsi",
   "event_type": 0,
+  "event_type_label": "Over Break",
   "amount": "300000.00",
-  "creative_ref": "https://cdn.example.com/pepsi-ad-v1.mp4",
+  "creative": {
+    "id": 1,
+    "brand": "Pepsi",
+    "title": "Pepsi Summer 2026",
+    "ad_url": "https://cdn.example.com/pepsi-summer-2026.mp4",
+    "status": "approved"
+  },
   "tx_hash": "0xabc...",
   "is_settled": false,
   "created_at": "2026-04-14T10:05:00Z"
@@ -470,9 +620,52 @@ Place a bid on an event type. Match must be OPEN. One bid per brand per event ty
 ---
 
 ### GET `/api/matches/{match_id}/bids/`
-List all bids for a match (open leaderboard — all brands visible to everyone).
+List all bids for a match (flat list, same endpoint as POST).
 
 **Auth:** Any authenticated user
+
+---
+
+### GET `/api/matches/{match_id}/bids/all/`
+Flat list with filtering and sorting.
+
+**Auth:** Any authenticated user
+
+**Query params:**
+- `?event_type=0..7` — filter to one event type
+- `?ordering=amount|-amount|created_at|-created_at` — sort (default: `-amount`)
+
+---
+
+### GET `/api/matches/{match_id}/bids/leaderboard/`
+Bids grouped by event type, each group sorted highest → lowest. Use this for the bid leaderboard UI.
+
+**Auth:** Any authenticated user
+
+**Query params:**
+- `?event_type=0..7` — return only one event type group
+
+**Response:**
+```json
+[
+  {
+    "event_type": 0,
+    "event_type_label": "Over Break",
+    "total_escrowed": 900000,
+    "bids": [
+      { "id": 3, "brand": "Pepsi", "amount": "400000.00", "creative": { ... }, "is_settled": false },
+      { "id": 5, "brand": "Jazz",  "amount": "300000.00", "creative": { ... }, "is_settled": false },
+      { "id": 1, "brand": "KFC",   "amount": "200000.00", "creative": { ... }, "is_settled": false }
+    ]
+  },
+  {
+    "event_type": 3,
+    "event_type_label": "Wicket Fall",
+    "total_escrowed": 250000,
+    "bids": [ ... ]
+  }
+]
+```
 
 ---
 
@@ -516,12 +709,14 @@ All settled auction results for a match, grouped by event trigger.
 [
   {
     "event_type": 0,
+    "event_type_label": "Over Break",
     "trigger_number": 1,
     "slots_filled": 2,
     "slots": [
       {
         "id": 1,
         "event_type": 0,
+        "event_type_label": "Over Break",
         "trigger_number": 1,
         "slot_position": 1,
         "winner": "Pepsi",
@@ -622,6 +817,7 @@ Trigger a cricket event — resolves the auction for that event type. Pushes `au
 {
   "tx_hash": "0xabc...",
   "event_type": 0,
+  "event_type_label": "Over Break",
   "trigger_number": 1
 }
 ```
@@ -685,23 +881,40 @@ ws://localhost:8000/ws/matches/{match_id}/
 ## DEMO FLOW (end-to-end sequence)
 
 ```
+# Setup
 1.  POST /api/auth/register/broadcaster/   → get broadcaster JWT
 2.  POST /api/auth/register/brand/         → get brand JWT (repeat for Pepsi, KFC, Jazz)
-3.  POST /api/deposits/                    → deposit 500,000 PKR as Pepsi
-4.  POST /api/matches/                     → create match as broadcaster
-5.  POST /api/matches/1/event-configs/     → configure OVER_BREAK (event_type=0)
-6.  POST /api/matches/1/event-configs/     → configure WICKET_FALL (event_type=3)
-7.  POST /api/exclusion-groups/            → create "Cola Brands" group with Pepsi + KFC
-8.  POST /api/matches/1/open-bidding/      → open bidding (locks exclusion groups)
-9.  POST /api/matches/1/bids/              → Pepsi bids 300,000 on OVER_BREAK
-10. POST /api/matches/1/bids/              → KFC bids 350,000 on OVER_BREAK
-11. PATCH /api/matches/1/bids/1/increase/  → Pepsi increases by 100,000 (now 400,000)
-12. POST /api/simulator/1/start/           → admin starts match (→ ACTIVE)
-13. POST /api/simulator/1/trigger-event/   → trigger OVER_BREAK  { "event_type": 0 }
-14. GET  /api/matches/1/auction-results/   → see slot winners
-15. POST /api/simulator/1/complete/        → admin completes match
-16. POST /api/matches/1/refunds/claim/     → KFC claims refund (excluded from slots)
-17. GET  /api/broadcasters/me/dashboard/   → view revenue
+3.  POST /api/deposits/                    → deposit 500,000 PKR as each brand
+
+# Creative upload & approval (must happen before bidding)
+4.  POST /api/creatives/                   → Pepsi uploads "Pepsi Summer 2026" ad
+5.  POST /api/creatives/                   → KFC uploads "KFC Zinger" ad
+6.  POST /api/creatives/                   → Jazz uploads "Jazz 5G" ad
+    [Admin: Django Admin → Creatives → select all → "Approve selected creatives"]
+
+# Match setup
+7.  POST /api/matches/                     → broadcaster creates match
+8.  POST /api/matches/1/event-configs/     → configure OVER_BREAK (event_type=0)
+9.  POST /api/matches/1/event-configs/     → configure WICKET_FALL (event_type=3)
+10. POST /api/exclusion-groups/            → create "Cola Brands" group with Pepsi + KFC
+11. POST /api/matches/1/open-bidding/      → open bidding (locks exclusion groups)
+
+# Bidding
+12. POST /api/matches/1/bids/              → Pepsi bids 300,000 on OVER_BREAK { creative_id: 1 }
+13. POST /api/matches/1/bids/              → KFC bids 350,000 on OVER_BREAK   { creative_id: 2 }
+14. PATCH /api/matches/1/bids/1/increase/  → Pepsi increases by 100,000 (now 400,000)
+15. POST /api/matches/1/bids/              → Jazz bids 200,000 on OVER_BREAK  { creative_id: 3 }
+
+# Live match
+16. POST /api/simulator/1/start/           → admin starts match (→ ACTIVE)
+17. POST /api/simulator/1/trigger-event/   → trigger OVER_BREAK { "event_type": 0 }
+                                             Slot 1: Pepsi (400K), Slot 2: Jazz (200K), KFC excluded
+18. GET  /api/matches/1/auction-results/   → see slot winners
+
+# Settlement
+19. POST /api/simulator/1/complete/        → admin completes match
+20. POST /api/matches/1/refunds/claim/     → KFC claims refund (excluded from all slots)
+21. GET  /api/broadcasters/me/dashboard/   → view broadcaster revenue
 ```
 
 ---
@@ -721,7 +934,9 @@ ws://localhost:8000/ws/matches/{match_id}/
 | Action | Role |
 |---|---|
 | Register brand/broadcaster | Anyone (no auth) |
+| Upload creatives | Brand user |
+| Approve / reject creatives | Admin (Django admin panel) |
 | Create match, configure events, open bidding | Broadcaster owner |
-| Deposit funds, place bids, claim refunds | Brand user |
+| Deposit funds, place bids (approved creative required), claim refunds | Brand user |
 | Start/complete/cancel match, trigger events | Admin |
 | View matches, bids, results | Any authenticated user |
