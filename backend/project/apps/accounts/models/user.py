@@ -6,6 +6,7 @@ from django.db import models
 
 from apps.accounts.models.brands import Brand
 from apps.accounts.models.broadcaster import Broadcaster
+from apps.accounts.models.storage import user_profile_upload_path
 
 
 class User(AbstractUser):
@@ -32,6 +33,9 @@ class User(AbstractUser):
         blank=True,
         on_delete=models.CASCADE,
         related_name="users",
+    )
+    profile_image = models.ImageField(
+        upload_to=user_profile_upload_path, null=True, blank=True
     )
 
     def clean(self) -> None:

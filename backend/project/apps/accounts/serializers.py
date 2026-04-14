@@ -38,11 +38,11 @@ class BrandRegisterInputSerializer(serializers.Serializer):
             "max_length": "Brand name must be 255 characters or fewer.",
         },
     )
-    logo_url = serializers.URLField(
+    logo = serializers.ImageField(
         required=False,
-        allow_blank=True,
+        allow_null=True,
         error_messages={
-            "invalid": "Please provide a valid logo URL.",
+            "invalid": "Please upload a valid logo image.",
         },
     )
 
@@ -95,11 +95,11 @@ class BroadcasterRegisterInputSerializer(serializers.Serializer):
             "max_length": "Broadcaster name must be 255 characters or fewer.",
         },
     )
-    logo_url = serializers.URLField(
+    logo = serializers.ImageField(
         required=False,
-        allow_blank=True,
+        allow_null=True,
         error_messages={
-            "invalid": "Please provide a valid logo URL.",
+            "invalid": "Please upload a valid logo image.",
         },
     )
 
@@ -137,6 +137,120 @@ class LoginInputSerializer(serializers.Serializer):
             "blank": "Password cannot be empty.",
         },
     )
+
+
+class UserUpdateSerializer(serializers.Serializer):
+    username = serializers.CharField(
+        max_length=150,
+        required=False,
+        allow_blank=False,
+        error_messages={
+            "max_length": "Username must be 150 characters or fewer.",
+            "blank": "Username cannot be empty.",
+        },
+    )
+    email = serializers.EmailField(
+        required=False,
+        allow_blank=True,
+        error_messages={"invalid": "Please enter a valid email address."},
+    )
+    profile_image = serializers.ImageField(
+        required=False,
+        allow_null=True,
+        error_messages={"invalid": "Please upload a valid profile image."},
+    )
+
+    def validate(self, attrs: dict) -> dict:
+        if not attrs:
+            raise serializers.ValidationError("No fields provided to update.")
+        return attrs
+
+    def validate_username(self, value: str) -> str:
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if (
+            user
+            and User.objects.filter(username__iexact=value).exclude(id=user.id).exists()
+        ):
+            raise serializers.ValidationError("This username is already taken.")
+        return value
+
+    def validate_email(self, value: str) -> str:
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if (
+            value
+            and user
+            and User.objects.filter(email__iexact=value).exclude(id=user.id).exists()
+        ):
+            raise serializers.ValidationError("This email address is already in use.")
+        return value
+
+
+class BrandUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(
+        max_length=255,
+        required=False,
+        allow_blank=False,
+        error_messages={
+            "max_length": "Brand name must be 255 characters or fewer.",
+            "blank": "Brand name cannot be empty.",
+        },
+    )
+    logo = serializers.ImageField(
+        required=False,
+        allow_null=True,
+        error_messages={"invalid": "Please upload a valid logo image."},
+    )
+
+    def validate(self, attrs: dict) -> dict:
+        if not attrs:
+            raise serializers.ValidationError("No fields provided to update.")
+        return attrs
+
+    def validate_name(self, value: str) -> str:
+        brand = self.context.get("brand")
+        if (
+            brand
+            and Brand.objects.filter(name__iexact=value).exclude(id=brand.id).exists()
+        ):
+            raise serializers.ValidationError("This brand name is already registered.")
+        return value
+
+
+class BroadcasterUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(
+        max_length=255,
+        required=False,
+        allow_blank=False,
+        error_messages={
+            "max_length": "Broadcaster name must be 255 characters or fewer.",
+            "blank": "Broadcaster name cannot be empty.",
+        },
+    )
+    logo = serializers.ImageField(
+        required=False,
+        allow_null=True,
+        error_messages={"invalid": "Please upload a valid logo image."},
+    )
+
+    def validate(self, attrs: dict) -> dict:
+        if not attrs:
+            raise serializers.ValidationError("No fields provided to update.")
+        return attrs
+
+    def validate_name(self, value: str) -> str:
+        broadcaster = self.context.get("broadcaster")
+        if (
+            broadcaster
+            and Broadcaster.objects.filter(name__iexact=value)
+            .exclude(id=broadcaster.id)
+            .exists()
+        ):
+            raise serializers.ValidationError(
+                "This broadcaster name is already registered."
+            )
+        return value
 
 
 class UserSerializer(serializers.ModelSerializer):

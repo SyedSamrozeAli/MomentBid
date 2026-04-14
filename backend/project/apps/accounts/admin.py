@@ -85,7 +85,6 @@ class BrandAdmin(admin.ModelAdmin):
     )
     list_display_links = ("id", "name")
     search_fields = ("name", "wallet_address")
-    list_per_page = 25
     ordering = ("-created_at",)
     list_select_related = True
     inlines = [BrandUserInline]
@@ -93,7 +92,7 @@ class BrandAdmin(admin.ModelAdmin):
     exclude = ("encrypted_private_key",)
 
     fieldsets = (
-        ("Organisation", {"fields": ("name", "logo_url")}),
+        ("Organisation", {"fields": ("name", "logo")}),
         ("Wallet", {"fields": ("wallet_address", "wire_funded")}),
         ("Meta", {"fields": ("created_at",), "classes": ("collapse",)}),
     )
@@ -139,7 +138,6 @@ class BroadcasterAdmin(admin.ModelAdmin):
     )
     list_display_links = ("id", "name")
     search_fields = ("name", "wallet_address")
-    list_per_page = 25
     ordering = ("-created_at",)
     list_select_related = True
     inlines = [BroadcasterUserInline]
@@ -147,7 +145,7 @@ class BroadcasterAdmin(admin.ModelAdmin):
     exclude = ("encrypted_private_key",)
 
     fieldsets = (
-        ("Organisation", {"fields": ("name", "logo_url")}),
+        ("Organisation", {"fields": ("name", "logo")}),
         ("Wallet", {"fields": ("wallet_address", "wire_funded")}),
         ("Meta", {"fields": ("created_at",), "classes": ("collapse",)}),
     )
@@ -208,6 +206,7 @@ class UserAdmin(DjangoUserAdmin):
 
     fieldsets = DjangoUserAdmin.fieldsets + (
         ("MomentBid Organisation", {"fields": ("role", "brand", "broadcaster")}),
+        ("Profile", {"fields": ("profile_image",)}),
     )
 
     def role_badge(self, obj: User) -> str:

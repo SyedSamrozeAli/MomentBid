@@ -6,6 +6,7 @@ from cryptography.fernet import Fernet
 from django.conf import settings
 from django.db import models
 
+from apps.accounts.models.storage import brand_logo_upload_path
 
 ADDRESS_LENGTH: Final[int] = 42
 
@@ -14,7 +15,6 @@ class WalletProtectedOrganization(models.Model):
     """Base model for organizations owning a managed custodial wallet."""
 
     name = models.CharField(max_length=255, unique=True)
-    logo_url = models.URLField(blank=True)
     wallet_address = models.CharField(
         max_length=ADDRESS_LENGTH, unique=True, blank=True
     )
@@ -52,6 +52,8 @@ class WalletProtectedOrganization(models.Model):
 
 class Brand(WalletProtectedOrganization):
     """Organization bidding for ad placements."""
+
+    logo = models.ImageField(upload_to=brand_logo_upload_path, null=True, blank=True)
 
     def __str__(self) -> str:
         return self.name

@@ -6,6 +6,7 @@ from apps.accounts.views import (
     LoginView,
     RegisterBrandView,
     RegisterBroadcasterView,
+    UserSelfUpdateView,
 )
 
 urlpatterns = [
@@ -18,4 +19,5 @@ urlpatterns = [
     path("login/", LoginView.as_view(), name="token-obtain-pair"),
     path("refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     path("me/", CurrentUserView.as_view(), name="auth-me"),
+    path("me/update/", UserSelfUpdateView.as_view(), name="auth-me-update"),
 ]
