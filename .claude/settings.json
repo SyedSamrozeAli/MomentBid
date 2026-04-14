@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:faucet.wirefluid.com)"
+      "WebFetch(domain:faucet.wirefluid.com)",
+      "Read(//d/Program Files/Claude/data/projects/d--PSL-Hackathon/e8633700-5bd5-4ad0-9f8e-b8f6472e9c7c/tool-results/**)",
+      "Bash(python manage.py check)"
     ]
   }
 }
