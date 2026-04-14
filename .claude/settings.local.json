@@ -1,7 +1,8 @@
 {
   "permissions": {
-    "allow": [
-      "WebFetch(domain:claude.ai)"
-    ]
+    "allow": ["WebFetch(domain:claude.ai)"]
+  },
+  "enabledPlugins": {
+    "caveman@caveman": true
   }
 }
