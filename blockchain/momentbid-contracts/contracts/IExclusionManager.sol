@@ -11,14 +11,14 @@ interface IExclusionManager {
     /**
      * @dev Returns group info for a group ID
      * @param groupId Group identifier
-     * @return groupId The group ID
-     * @return crossEventSeparation Whether separation applies cross-event
      * @return separationDistance Minimum slots between group members
+     * @return crossEventSeparation Whether separation applies cross-event
      * @return locked Whether group is locked
+     * @return brandCount Number of brands in the group
      */
     function getGroupInfo(uint256 groupId) 
         external view 
-        returns (uint256, bool, uint8, bool);
+        returns (uint8, bool, bool, uint256);
     
     /**
      * @dev Returns which group a brand belongs to (0 = no group)
