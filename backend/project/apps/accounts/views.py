@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.contrib.auth import authenticate
 from django.db import transaction
 from django.db.models import Sum
 from rest_framework import status
@@ -12,6 +13,7 @@ from apps.accounts.permissions import IsBrandUser, IsBroadcasterUser
 from apps.accounts.serializers import (
     BrandRegisterInputSerializer,
     BroadcasterRegisterInputSerializer,
+    LoginInputSerializer,
     UserSerializer,
 )
 from apps.blockchain import get_blockchain_service
@@ -117,6 +119,66 @@ class RegisterBroadcasterView(APIView):
             },
             message="Broadcaster registered successfully",
             status_code=status.HTTP_201_CREATED,
+        )
+
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = LoginInputSerializer(data=request.data)
+        if not serializer.is_valid():
+            return serializer_validation_error_response(serializer)
+
+        payload = serializer.validated_data
+        user = authenticate(
+            request,
+            username=payload["username"],
+            password=payload["password"],
+        )
+
+        if user is None:
+            return CustomResponse.error(
+                message="Invalid username or password.",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if not user.is_active:
+            return CustomResponse.error(
+                message="Your account is inactive. Please contact support.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        refresh = RefreshToken.for_user(user)
+
+        logo = ""
+        brand_name = None
+        broadcaster_name = None
+        org_type = None
+
+        if user.brand:
+            org_type = "brand"
+            logo = user.brand.logo_url
+            brand_name = user.brand.name
+        elif user.broadcaster:
+            org_type = "broadcaster"
+            logo = user.broadcaster.logo_url
+            broadcaster_name = user.broadcaster.name
+
+        return CustomResponse.success(
+            data={
+                "username": user.username,
+                "email": user.email,
+                "logo": logo,
+                "brand_name": brand_name,
+                "broadcaster_name": broadcaster_name,
+                "org_type": org_type,
+                "tokens": {
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                },
+            },
+            message="Login successful.",
         )
 
 

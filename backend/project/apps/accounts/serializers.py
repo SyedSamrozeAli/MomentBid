@@ -121,6 +121,24 @@ class BroadcasterRegisterInputSerializer(serializers.Serializer):
         return value
 
 
+class LoginInputSerializer(serializers.Serializer):
+    username = serializers.CharField(
+        max_length=150,
+        error_messages={
+            "required": "Username is required.",
+            "blank": "Username cannot be empty.",
+            "max_length": "Username must be 150 characters or fewer.",
+        },
+    )
+    password = serializers.CharField(
+        write_only=True,
+        error_messages={
+            "required": "Password is required.",
+            "blank": "Password cannot be empty.",
+        },
+    )
+
+
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
