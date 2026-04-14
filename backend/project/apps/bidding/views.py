@@ -190,8 +190,6 @@ class MatchBidListCreateView(APIView):
         spender_address = (
             settings.MOMENTBID_CORE_ADDRESS or request.user.brand.wallet_address
         )
-        # Sync mock service in-memory balance from DB so its internal check passes
-        blockchain_service.mint_tokens(request.user.brand.wallet_address, _available)
 
         with transaction.atomic():
             approve_result = blockchain_service.approve_tokens(

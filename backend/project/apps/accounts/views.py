@@ -59,6 +59,10 @@ class RegisterBrandView(APIView):
 
             blockchain_service.fund_gas(address, 0.1)
 
+            # Grant BRAND_ROLE on MomentBidCore (real chain only; mock is no-op)
+            if hasattr(blockchain_service, "grant_brand_role"):
+                blockchain_service.grant_brand_role(address)
+
             user = User.objects.create_user(
                 username=payload["username"],
                 email=payload.get("email", ""),
@@ -112,6 +116,10 @@ class RegisterBroadcasterView(APIView):
                 broadcaster.save(update_fields=["logo"])
 
             blockchain_service.fund_gas(address, 0.1)
+
+            # Grant BROADCASTER_ROLE on MomentBidCore + ExclusionManager (real chain only)
+            if hasattr(blockchain_service, "grant_broadcaster_role"):
+                blockchain_service.grant_broadcaster_role(address)
 
             user = User.objects.create_user(
                 username=payload["username"],
