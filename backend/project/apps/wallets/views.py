@@ -9,6 +9,7 @@ from apps.blockchain import get_blockchain_service
 from apps.wallets.models import Deposit, Transaction
 from apps.wallets.serializers import DepositCreateSerializer, DepositSerializer
 from utils.custom_response import CustomResponse
+from utils.validation import serializer_validation_error_response
 
 
 class DepositListCreateView(APIView):
@@ -20,7 +21,8 @@ class DepositListCreateView(APIView):
 
     def post(self, request):
         serializer = DepositCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return serializer_validation_error_response(serializer)
 
         amount_pkr = serializer.validated_data["amount_pkr"]
         blockchain_service = get_blockchain_service()

@@ -9,17 +9,20 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import User
 from apps.accounts.permissions import IsBrandUser
-from apps.bidding.models import Bid
+from apps.bidding.models import AuctionResult, Bid, Refund
 from apps.bidding.serializers import (
+    AuctionResultSerializer,
     BidCreateSerializer,
     BidIncreaseSerializer,
     BidSerializer,
     BudgetCapSerializer,
+    RefundSerializer,
 )
 from apps.blockchain import get_blockchain_service
 from apps.matches.models import Match
 from apps.wallets.models import Transaction
 from utils.custom_response import CustomResponse
+from utils.validation import serializer_validation_error_response
 
 
 class MatchBidListCreateView(APIView):
@@ -45,7 +48,8 @@ class MatchBidListCreateView(APIView):
             return CustomResponse.error(message="Bids can only be placed in OPEN state")
 
         serializer = BidCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return serializer_validation_error_response(serializer)
         payload = serializer.validated_data
 
         bid_exists = Bid.objects.filter(
@@ -124,7 +128,8 @@ class MatchBidIncreaseView(APIView):
         bid = get_object_or_404(Bid, pk=bid_id, match=match, brand=request.user.brand)
 
         serializer = BidIncreaseSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return serializer_validation_error_response(serializer)
         additional_amount = serializer.validated_data["additional_amount"]
 
         blockchain_service = get_blockchain_service()
@@ -184,7 +189,8 @@ class BudgetCapView(APIView):
     def post(self, request, match_id: int):
         match = get_object_or_404(Match, pk=match_id)
         serializer = BudgetCapSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return serializer_validation_error_response(serializer)
 
         cap = serializer.validated_data["cap"]
         brand_key = request.user.brand.decrypt_private_key()
@@ -213,3 +219,91 @@ class BudgetCapView(APIView):
         )
 
         return CustomResponse.success(data={"cap": str(cap)}, message="Budget cap set")
+
+
+class AuctionResultListView(APIView):
+    """All auction settlements for a match, grouped by (event_type, trigger_number)."""
+
+    def get(self, request, match_id: int):
+        from itertools import groupby
+
+        results = AuctionResult.objects.select_related("winner").filter(
+            match_id=match_id
+        )
+        grouped: list[dict] = []
+        for (event_type, trigger_number), slots in groupby(
+            results, key=lambda r: (r.event_type, r.trigger_number)
+        ):
+            slot_list = list(slots)
+            grouped.append(
+                {
+                    "event_type": event_type,
+                    "trigger_number": trigger_number,
+                    "slots": AuctionResultSerializer(slot_list, many=True).data,
+                    "slots_filled": len(slot_list),
+                }
+            )
+        return CustomResponse.success(data=grouped)
+
+
+class RefundClaimView(APIView):
+    permission_classes = [IsBrandUser]
+
+    def post(self, request, match_id: int):
+        match = get_object_or_404(Match, pk=match_id)
+        if match.state not in {Match.State.COMPLETED, Match.State.CANCELLED}:
+            return CustomResponse.error(
+                message="Refunds only available after match is COMPLETED or CANCELLED"
+            )
+
+        already_claimed = Refund.objects.filter(
+            match=match, brand=request.user.brand
+        ).exists()
+        if already_claimed:
+            return CustomResponse.error(
+                message="Refund already claimed for this match",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
+        blockchain_service = get_blockchain_service()
+        brand_key = request.user.brand.decrypt_private_key()
+        tx_result = blockchain_service.claim_refund(
+            brand_key, int(match.on_chain_match_id or 0)
+        )
+        if not tx_result.success:
+            return CustomResponse.error(
+                message="Refund claim failed", error=tx_result.error
+            )
+
+        refund_amount = tx_result.data.get("refund_amount", 0)
+        refund = Refund.objects.create(
+            match=match,
+            brand=request.user.brand,
+            amount=refund_amount,
+            tx_hash=tx_result.tx_hash,
+        )
+
+        from apps.indexer.push import push_match_event
+
+        push_match_event(
+            match.id,
+            "refund_processed",
+            {"brand": request.user.brand.name, "amount": refund_amount},
+        )
+
+        return CustomResponse.success(
+            data=RefundSerializer(refund).data,
+            message="Refund claimed",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+
+class RefundListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, match_id: int):
+        get_object_or_404(Match, pk=match_id)
+        qs = Refund.objects.select_related("brand").filter(match_id=match_id)
+        if request.user.brand:
+            qs = qs.filter(brand=request.user.brand)
+        return CustomResponse.success(data=RefundSerializer(qs, many=True).data)

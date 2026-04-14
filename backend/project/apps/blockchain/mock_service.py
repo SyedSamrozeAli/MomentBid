@@ -20,6 +20,7 @@ class MockBlockchainService(BlockchainServiceBase):
         self._match_states: dict[int, int] = {}
         self._exclusion_groups: dict[int, dict[str, object]] = {}
         self._counter = itertools.count(start=1)
+        self._match_id_counter = itertools.count(start=1)
 
     def _generate_tx_hash(self, parts: Iterable[object]) -> str:
         payload = "|".join(str(part) for part in parts)
@@ -113,7 +114,7 @@ class MockBlockchainService(BlockchainServiceBase):
 
     def create_match(self, broadcaster_key: str) -> TxResult:
         broadcaster_address = self._address_from_private_key(broadcaster_key)
-        match_id = next(self._counter)
+        match_id = next(self._match_id_counter)
         self._match_states[match_id] = 0
         return TxResult(
             success=True,
