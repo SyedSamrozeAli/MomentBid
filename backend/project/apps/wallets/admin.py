@@ -222,9 +222,10 @@ class TransactionAdmin(admin.ModelAdmin):
         amount = obj.metadata.get("amount_pkr") or obj.metadata.get("cap")
         if amount:
             try:
+                formatted_amount = f"PKR {int(float(amount)):,}"
                 return format_html(
-                    '<span style="font-weight:500;">PKR {:,}</span>',
-                    int(float(amount)),
+                    '<span style="font-weight:500;">{}</span>',
+                    formatted_amount,
                 )
             except (ValueError, TypeError):
                 pass
@@ -234,9 +235,10 @@ class TransactionAdmin(admin.ModelAdmin):
 
     def gas_display(self, obj: Transaction) -> str:
         if obj.gas_used:
+            formatted_gas = f"{int(obj.gas_used):,}"
             return format_html(
-                '<span style="font-size:11px;color:#6b7280;">{:,}</span>',
-                obj.gas_used,
+                '<span style="font-size:11px;color:#6b7280;">{}</span>',
+                formatted_gas,
             )
         return format_html('<span style="color:#9ca3af;">{}</span>', "—")
 
