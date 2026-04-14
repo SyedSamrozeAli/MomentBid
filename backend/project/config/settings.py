@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import environ
 
@@ -21,6 +22,13 @@ env = environ.Env(
     RABBITMQ_URL=(str, "amqp://guest:guest@localhost:5672//"),
 )
 environ.Env.read_env(ROOT_DIR / ".env")
+
+
+def _normalize_rabbitmq_url(url: str) -> str:
+    """Normalize RabbitMQ URL so root-vhost is encoded as a single '/'."""
+    parsed = urlsplit(url)
+    normalized_path = "/" if parsed.path in {"", "//"} else parsed.path
+    return urlunsplit(parsed._replace(path=normalized_path))
 
 
 # Quick-start development settings - unsuitable for production
@@ -93,16 +101,24 @@ WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
 # Channel Layers with RabbitMQ
+RABBITMQ_CHANNEL_LAYER_CONFIG = {
+    "host": _normalize_rabbitmq_url(env("RABBITMQ_URL")),
+    # Optional: adjust expiry (default 60s) or capacity
+    "expiry": 60,
+    "local_capacity": 100,
+}
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_rabbitmq.core.RabbitmqChannelLayer",
-        "CONFIG": {
-            "host": "amqp://guest:guest@localhost:5672/",
-            # Optional: adjust expiry (default 60s) or capacity
-            "expiry": 60,
-            "local_capacity": 100,
-        },
-    }
+        "CONFIG": {**RABBITMQ_CHANNEL_LAYER_CONFIG},
+    },
+    # Use a dedicated layer object for sync-side event publishing so the
+    # WebSocket consumer layer is not initialized on a different event loop.
+    "publisher": {
+        "BACKEND": "channels_rabbitmq.core.RabbitmqChannelLayer",
+        "CONFIG": {**RABBITMQ_CHANNEL_LAYER_CONFIG},
+    },
 }
 
 

@@ -11,6 +11,8 @@ from channels.layers import get_channel_layer
 
 logger = logging.getLogger(__name__)
 
+PUBLISHER_CHANNEL_LAYER_ALIAS = "publisher"
+
 _background_loop: asyncio.AbstractEventLoop | None = None
 _background_thread: Thread | None = None
 _background_lock = Lock()
@@ -57,8 +59,12 @@ async def _push_match_event_async(
     match_id: int, event_name: str, payload: dict
 ) -> None:
     """Send a match event over the configured channel layer in async context."""
-    channel_layer = get_channel_layer()
+    channel_layer = get_channel_layer(PUBLISHER_CHANNEL_LAYER_ALIAS)
     if channel_layer is None:
+        logger.warning(
+            "WebSocket push skipped (channel layer alias '%s' unavailable)",
+            PUBLISHER_CHANNEL_LAYER_ALIAS,
+        )
         return
 
     await channel_layer.group_send(
