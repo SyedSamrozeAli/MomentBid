@@ -83,6 +83,8 @@ contract MomentBidCore is AccessControl, ReentrancyGuard, Pausable {
     mapping(uint256 => mapping(address => bool)) public refundClaimed;
     mapping(uint256 => mapping(uint8 => bool)) public eventTriggered;
     mapping(uint256 => address[]) internal matchBidders;
+    mapping(uint256 => uint256[]) internal registeredExclusionGroups;
+    mapping(uint256 => mapping(uint256 => bool)) internal isExclusionGroupRegistered;
     
     // ──── Custom Errors ────
     error MatchDoesNotExist(uint256 matchId);
@@ -105,6 +107,7 @@ contract MomentBidCore is AccessControl, ReentrancyGuard, Pausable {
     error InvalidPlatformFeePercent(uint8 percent);
     error AdminOnly();
     error BroadcasterOrAdminRequired();
+    error InvalidGroupId(uint256 groupId);
     
     // ──── Events ────
     event MatchCreated(uint256 indexed matchId, address indexed broadcaster, uint256 matchDate);
@@ -144,7 +147,7 @@ contract MomentBidCore is AccessControl, ReentrancyGuard, Pausable {
         uint256 refundAmount,
         uint256 reservationFees
     );
-    event ExclusionGroupLocked(uint256 indexed matchId, uint8 groupId);
+    event ExclusionGroupLocked(uint256 indexed matchId, uint256 groupId);
     
     // ──── Constructor ────
     constructor(
@@ -231,6 +234,31 @@ contract MomentBidCore is AccessControl, ReentrancyGuard, Pausable {
             maxTriggers
         );
     }
+
+    /**
+     * @dev Registers an exclusion group to be locked when match transitions CREATED -> OPEN.
+     * @param matchId Match identifier
+     * @param groupId Exclusion group identifier in ExclusionManager
+     */
+    function registerExclusionGroup(uint256 matchId, uint256 groupId)
+        external
+        whenNotPaused
+    {
+        if (!matches[matchId].exists) revert MatchDoesNotExist(matchId);
+        if (matches[matchId].state != MatchState.CREATED) {
+            revert MatchNotInState(matchId, MatchState.CREATED);
+        }
+
+        bool isAdmin = hasRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        bool isBroadcaster = msg.sender == matches[matchId].broadcaster;
+        if (!isBroadcaster && !isAdmin) revert BroadcasterOrAdminRequired();
+
+        if (groupId == 0) revert InvalidGroupId(groupId);
+        if (isExclusionGroupRegistered[matchId][groupId]) return;
+
+        isExclusionGroupRegistered[matchId][groupId] = true;
+        registeredExclusionGroups[matchId].push(groupId);
+    }
     
     /**
      * @dev Transitions match between states
@@ -264,11 +292,17 @@ contract MomentBidCore is AccessControl, ReentrancyGuard, Pausable {
             revert BroadcasterOrAdminRequired();
         }
         
-        // Side effect: lock exclusion groups on CREATED → OPEN
+        // Side effect: lock registered exclusion groups on CREATED -> OPEN.
         if (currentState == MatchState.CREATED && newState == MatchState.OPEN) {
-            // Note: ExclusionManager groups are locked during event definition
-            // Broadcasters must configure all groups via defineEventType before transitioning to OPEN
-            // This ensures group rules cannot be modified during active bidding
+            if (exclusionManager != address(0)) {
+                IExclusionManager em = IExclusionManager(exclusionManager);
+                uint256[] storage groupIds = registeredExclusionGroups[matchId];
+
+                for (uint256 i = 0; i < groupIds.length; i++) {
+                    em.lockGroup(groupIds[i]);
+                    emit ExclusionGroupLocked(matchId, groupIds[i]);
+                }
+            }
         }
         
         matches[matchId].state = newState;
@@ -744,6 +778,18 @@ contract MomentBidCore is AccessControl, ReentrancyGuard, Pausable {
     function getMatchBidders(uint256 matchId) external view returns (address[] memory) {
         if (!matches[matchId].exists) revert MatchDoesNotExist(matchId);
         return matchBidders[matchId];
+    }
+
+    /**
+     * @dev Returns exclusion groups registered for lock-on-open behavior.
+     */
+    function getRegisteredExclusionGroups(uint256 matchId)
+        external
+        view
+        returns (uint256[] memory)
+    {
+        if (!matches[matchId].exists) revert MatchDoesNotExist(matchId);
+        return registeredExclusionGroups[matchId];
     }
     
     /**

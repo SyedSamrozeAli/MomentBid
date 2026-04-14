@@ -679,6 +679,19 @@ describe("ExclusionManager", function () {
       ).to.be.revertedWithCustomError(manager, "EmptyBrandsArray");
     });
 
+    it("Should reject admin override when a brand belongs to another group", async function () {
+      await manager
+        .connect(broadcaster)
+        .createExclusionGroup(1, [brand1.address, brand2.address], 2, true);
+      await manager
+        .connect(broadcaster)
+        .createExclusionGroup(2, [brand3.address, brand4.address], 1, false);
+
+      await expect(
+        manager.connect(owner).adminOverride(1, [brand3.address, brand5.address], 2, false)
+      ).to.be.revertedWithCustomError(manager, "BrandAlreadyInGroup").withArgs(brand3.address);
+    });
+
     it("Should emit events on all operations", async function () {
       const brands = [brand1.address, brand2.address];
       

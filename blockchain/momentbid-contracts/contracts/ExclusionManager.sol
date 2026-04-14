@@ -209,6 +209,12 @@ contract ExclusionManager is AccessControl {
         // Validate new brands
         for (uint256 i = 0; i < newBrands.length; i++) {
             if (newBrands[i] == address(0)) revert ZeroAddress();
+
+            // Keep one-group-per-brand invariant even during admin override.
+            uint256 existingGroup = brandToGroup[newBrands[i]];
+            if (existingGroup != 0 && existingGroup != groupId) {
+                revert BrandAlreadyInGroup(newBrands[i]);
+            }
             
             for (uint256 j = i + 1; j < newBrands.length; j++) {
                 if (newBrands[i] == newBrands[j]) revert DuplicateBrandInBrandsArray();

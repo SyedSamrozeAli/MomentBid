@@ -131,6 +131,27 @@ describe("MomentBidCore", function () {
       ).to.be.revertedWithCustomError(core, "MatchNotInState");
     });
 
+    it("T4A: Registered exclusion groups lock on CREATED -> OPEN", async function () {
+      const matchDate = Math.floor(Date.now() / 1000) + 3600;
+      const matchId = 1;
+
+      await exclusionManager.grantRole(BROADCASTER_ROLE, broadcaster.address);
+      await exclusionManager
+        .connect(broadcaster)
+        .createExclusionGroup(1, [brand1.address, brand2.address], 1, true);
+
+      await core.connect(broadcaster).createMatch(matchDate);
+      await core.connect(broadcaster).registerExclusionGroup(matchId, 1);
+
+      const registered = await core.getRegisteredExclusionGroups(matchId);
+      expect(registered).to.deep.equal([1n]);
+
+      await core.connect(broadcaster).transitionMatchState(matchId, 1); // OPEN
+
+      const groupInfo = await exclusionManager.getGroupInfo(1);
+      expect(groupInfo.locked).to.equal(true);
+    });
+
     it("T5: State transitions follow machine rules", async function () {
       const matchDate = Math.floor(Date.now() / 1000) + 3600;
       const matchId = 1;

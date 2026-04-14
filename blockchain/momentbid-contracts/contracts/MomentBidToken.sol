@@ -33,6 +33,8 @@ contract MomentBidToken is ERC20, AccessControl, Pausable, ReentrancyGuard {
     error BurnFromZeroAddress();
     error BurnAmountZero();
     error BurnAmountExceedsBalance();
+    error BatchLengthMismatch();
+    error BurnAmountExceedsAllowance(uint256 allowance, uint256 required);
     
     // ──── Events ────
     event TokensMinted(address indexed to, uint256 amount, address indexed minter);
@@ -113,7 +115,7 @@ contract MomentBidToken is ERC20, AccessControl, Pausable, ReentrancyGuard {
         whenNotPaused
         nonReentrant
     {
-        if (recipients.length != amounts.length) revert("Length mismatch");
+        if (recipients.length != amounts.length) revert BatchLengthMismatch();
         
         for (uint256 i = 0; i < recipients.length; i++) {
             if (recipients[i] == address(0)) revert MintToZeroAddress();
@@ -160,7 +162,9 @@ contract MomentBidToken is ERC20, AccessControl, Pausable, ReentrancyGuard {
         
         // Check and reduce allowance
         uint256 currentAllowance = allowance(account, msg.sender);
-        if (currentAllowance < amount) revert("Insufficient allowance");
+        if (currentAllowance < amount) {
+            revert BurnAmountExceedsAllowance(currentAllowance, amount);
+        }
         
         _approve(account, msg.sender, currentAllowance - amount);
         _burn(account, amount);

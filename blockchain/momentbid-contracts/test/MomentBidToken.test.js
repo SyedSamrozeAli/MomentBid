@@ -494,7 +494,7 @@ describe("MomentBidToken", function () {
       
       await expect(
         token.connect(minter).mintBatch(recipients, amounts)
-      ).to.be.revertedWith("Length mismatch");
+      ).to.be.revertedWithCustomError(token, "BatchLengthMismatch");
     });
 
     it("Should allow burning tokens", async function () {
@@ -558,6 +558,17 @@ describe("MomentBidToken", function () {
       await expect(
         token.connect(user1).transfer(user2.address, 2000)
       ).to.be.revertedWithCustomError(token, "ERC20InsufficientBalance");
+    });
+
+    it("Should revert burnFrom when allowance is insufficient", async function () {
+      await token.connect(minter).mint(user1.address, 1000);
+      await token.connect(user1).approve(user2.address, 300);
+
+      await expect(
+        token.connect(user2).burnFrom(user1.address, 500)
+      )
+        .to.be.revertedWithCustomError(token, "BurnAmountExceedsAllowance")
+        .withArgs(300, 500);
     });
   });
 });
