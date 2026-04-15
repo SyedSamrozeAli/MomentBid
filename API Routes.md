@@ -325,6 +325,26 @@ Response data: updated bid object (same shape as POST /bids/ response)
 
 ---
 
+**Call on "Cancel Bid" button click:**
+
+### `DELETE /api/matches/{match_id}/bids/{bid_id}/cancel/`
+**Auth:** Brand user (must own the bid)  
+**Match must be state 1 (OPEN)**
+
+```json
+Request: empty body
+
+Response (200):
+{ "success": true, "message": "Bid cancelled. Balance restored.", "data": null }
+```
+
+> Balance is restored immediately in the DB — `GET /api/balance/` will reflect the freed amount.  
+> Show "Cancel Bid" button only when `match.state === 1` (OPEN) and bid is not yet settled or cancelled.  
+> After cancel, re-fetch `/api/balance/` and leaderboard. WebSocket pushes `bid_cancelled` to all clients.  
+> Brand can place a **new bid** on the same event type after cancelling.
+
+---
+
 **Call on "Set Budget Cap" form submit:**
 
 ### `POST /api/matches/{match_id}/budget-cap/`
@@ -630,6 +650,40 @@ Response (201):
 
 **Call for each event type the broadcaster enables (match must be state 0 = CREATED):**
 
+### `GET /api/matches/{match_id}/event-configs/`
+**Auth:** Broadcaster user (must own the match)
+
+```json
+Response data: [
+  {
+    "id": 1,
+    "event_type": 0,
+    "event_type_label": "Over Break",
+    "reserve_price": "100000.00",
+    "reservation_fee_pct": "3.00",
+    "slot_count": 3,
+    "max_triggers": 40,
+    "trigger_count": 0
+  },
+  {
+    "id": 2,
+    "event_type": 3,
+    "event_type_label": "Wicket Fall",
+    "reserve_price": "50000.00",
+    "reservation_fee_pct": "5.00",
+    "slot_count": 2,
+    "max_triggers": 20,
+    "trigger_count": 0
+  }
+]
+```
+
+Sorted by `event_type` ascending. Use this to populate the event config list/edit UI on My Matches page.
+
+---
+
+**Call on each event type "Add" form submit:**
+
 ### `POST /api/matches/{match_id}/event-configs/`
 **Auth:** Broadcaster user (must own the match)
 
@@ -659,6 +713,61 @@ Response (201): event config object
 | 7 | SUPER_OVER | 8 | 1 |
 
 > Cannot configure events after match is OPEN (state ≥ 1). Show event config form only when `state === 0`.
+
+---
+
+**Call to view a single event config:**
+
+### `GET /api/matches/{match_id}/event-configs/{event_type}/`
+**Auth:** Broadcaster user (must own the match)
+
+```json
+Response data:
+{
+  "id": 1,
+  "event_type": 0,
+  "event_type_label": "Over Break",
+  "reserve_price": "100000.00",
+  "reservation_fee_pct": "3.00",
+  "slot_count": 3,
+  "max_triggers": 40,
+  "trigger_count": 0
+}
+```
+
+---
+
+**Call on "Save Changes" in event config edit form (match must be state 0 = CREATED):**
+
+### `PATCH /api/matches/{match_id}/event-configs/{event_type}/`
+**Auth:** Broadcaster user (must own the match)  
+**Match must be state 0 (CREATED)**
+
+```json
+Request (any subset — event_type cannot be changed):
+{
+  "reserve_price": "150000",
+  "slot_count": 5
+}
+
+Response data: updated event config object (same shape as GET above)
+```
+
+> `event_type` in the URL is the identifier — cannot be changed via PATCH.  
+> Returns 400 if match state is not CREATED.
+
+---
+
+**Call on "Delete" button on event config (match must be state 0 = CREATED):**
+
+### `DELETE /api/matches/{match_id}/event-configs/{event_type}/`
+**Auth:** Broadcaster user (must own the match)  
+**Match must be state 0 (CREATED)**
+
+```json
+Request: empty body
+Response (200): { "success": true, "message": "Event config deleted" }
+```
 
 ---
 
@@ -1107,6 +1216,7 @@ No auth header on WebSocket connection. Connect per active match page.
 |---|---|---|---|
 | `bid_placed` | Brand places new bid | Brand (leaderboard), Broadcaster (bid count) | Re-fetch leaderboard |
 | `bid_increased` | Brand increases bid | Brand (leaderboard) | Re-fetch leaderboard |
+| `bid_cancelled` | Brand cancels bid | Brand (leaderboard + balance), Broadcaster | Re-fetch leaderboard, update balance |
 | `auction_settled` | Admin triggers event | Everyone | Re-fetch auction-results, update revenue |
 | `match_state_changed` | Match state transitions | Everyone | Update state badge, enable/disable controls |
 | `refund_processed` | Brand claims refund | Brand | Update balance display |
@@ -1184,7 +1294,9 @@ No auth header on WebSocket connection. Connect per active match page.
 | `GET /matches/` | ✅ | ✅ | ✅ | — |
 | `GET /matches/{id}/` | ✅ | ✅ | ✅ | — |
 | `POST /matches/` | — | ✅ | — | — |
+| `GET /matches/{id}/event-configs/` | — | ✅ | — | — |
 | `POST /matches/{id}/event-configs/` | — | ✅ | — | — |
+| `GET/PATCH/DELETE /matches/{id}/event-configs/{event_type}/` | — | ✅ | — | — |
 | `POST /matches/{id}/open-bidding/` | — | ✅ | — | — |
 | `POST /exclusion-groups/` | — | ✅ | — | — |
 | `GET /exclusion-groups/` | — | ✅ | — | — |
