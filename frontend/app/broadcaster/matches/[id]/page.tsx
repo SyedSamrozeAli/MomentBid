@@ -8,10 +8,13 @@ import { useParams, useSearchParams } from "next/navigation";
 import {
   BroadcasterApiError,
   createMatchEventConfig,
+  deleteMatchEventConfig,
   getAuctionResults,
   getMatchBidLeaderboard,
+  getMatchEventConfig,
   getMatchDetail,
   openBidding,
+  updateMatchEventConfig,
   type AuctionResultGroup,
   type LeaderboardGroup,
   type MatchDetail,
@@ -33,6 +36,13 @@ type EventCategory = {
   maxTriggers: string;
   enabled: boolean;
   configured: boolean;
+};
+
+type EventConfigPayload = {
+  reserve_price: string;
+  reservation_fee_pct: string;
+  slot_count: number;
+  max_triggers: number;
 };
 
 const defaultCategories: EventCategory[] = [
@@ -203,6 +213,42 @@ function deriveCategories(defaults: EventCategory[], configs: MatchEventConfig[]
   return categories;
 }
 
+function toEventConfigPayload(category: EventCategory): EventConfigPayload | null {
+  const reservePrice = category.reservePrice.trim();
+  const reservationFee = category.reservationFee.trim();
+  const reservePriceNumber = Number.parseFloat(reservePrice);
+  const reservationFeeNumber = Number.parseFloat(reservationFee);
+  const slotCount = Number.parseInt(category.slots, 10);
+  const maxTriggers = Number.parseInt(category.maxTriggers, 10);
+
+  if (!reservePrice || !reservationFee) {
+    return null;
+  }
+
+  if (!Number.isFinite(reservePriceNumber) || reservePriceNumber < 0) {
+    return null;
+  }
+
+  if (!Number.isFinite(reservationFeeNumber) || reservationFeeNumber < 1 || reservationFeeNumber > 5) {
+    return null;
+  }
+
+  if (!Number.isFinite(slotCount) || slotCount < 1) {
+    return null;
+  }
+
+  if (!Number.isFinite(maxTriggers) || maxTriggers < 1) {
+    return null;
+  }
+
+  return {
+    reserve_price: reservePrice,
+    reservation_fee_pct: reservationFee,
+    slot_count: slotCount,
+    max_triggers: maxTriggers,
+  };
+}
+
 function getCreativeLabel(creativeRef: string): string {
   if (!creativeRef) {
     return "No creative assigned";
@@ -234,6 +280,7 @@ export default function BroadcasterMatchDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isOpeningBidding, setIsOpeningBidding] = useState(false);
   const [savingEventType, setSavingEventType] = useState<number | null>(null);
+  const [deletingEventType, setDeletingEventType] = useState<number | null>(null);
   const [pageError, setPageError] = useState("");
 
   const matchStatus = useMemo<MatchStatus>(() => {
@@ -523,7 +570,15 @@ export default function BroadcasterMatchDetailPage() {
   }, [activeTab, matchDetail]);
 
   const updateCategory = useCallback(
-    (eventType: number, patch: Partial<Pick<EventCategory, "reservePrice" | "slots" | "reservationFee" | "maxTriggers">>) => {
+    (
+      eventType: number,
+      patch: Partial<
+        Pick<
+          EventCategory,
+          "reservePrice" | "slots" | "reservationFee" | "maxTriggers" | "enabled" | "configured" | "name"
+        >
+      >,
+    ) => {
       setCategories((previous) =>
         previous.map((category) =>
           category.eventType === eventType
@@ -570,17 +625,8 @@ export default function BroadcasterMatchDetailPage() {
         return;
       }
 
-      const slotCount = Number.parseInt(category.slots, 10);
-      const maxTriggers = Number.parseInt(category.maxTriggers, 10);
-
-      if (
-        !category.reservePrice.trim() ||
-        !category.reservationFee.trim() ||
-        !Number.isFinite(slotCount) ||
-        slotCount < 1 ||
-        !Number.isFinite(maxTriggers) ||
-        maxTriggers < 1
-      ) {
+      const payload = toEventConfigPayload(category);
+      if (!payload) {
         setPageError("Fill in valid config values before saving.");
         return;
       }
@@ -591,10 +637,18 @@ export default function BroadcasterMatchDetailPage() {
       try {
         await createMatchEventConfig(matchId, {
           event_type: category.eventType,
-          reserve_price: category.reservePrice.trim(),
-          reservation_fee_pct: category.reservationFee.trim(),
-          slot_count: slotCount,
-          max_triggers: maxTriggers,
+          ...payload,
+        });
+
+        const latestConfig = await getMatchEventConfig(matchId, category.eventType);
+        updateCategory(category.eventType, {
+          reservePrice: String(latestConfig.reserve_price),
+          reservationFee: String(latestConfig.reservation_fee_pct),
+          slots: String(latestConfig.slot_count),
+          maxTriggers: String(latestConfig.max_triggers),
+          enabled: true,
+          configured: true,
+          name: latestConfig.event_type_label,
         });
 
         await refreshMatchDetail();
@@ -606,6 +660,99 @@ export default function BroadcasterMatchDetailPage() {
         setPageError(message);
       } finally {
         setSavingEventType(null);
+      }
+    },
+    [categories, matchDetail, matchId, refreshMatchDetail, updateCategory],
+  );
+
+  const handleUpdateEventConfig = useCallback(
+    async (eventType: number): Promise<void> => {
+      if (!Number.isFinite(matchId) || !matchDetail) {
+        return;
+      }
+
+      if (matchDetail.state !== 0) {
+        return;
+      }
+
+      const category = categories.find((existing) => existing.eventType === eventType);
+      if (!category || !category.enabled || !category.configured) {
+        return;
+      }
+
+      const payload = toEventConfigPayload(category);
+      if (!payload) {
+        setPageError("Fill in valid config values before updating.");
+        return;
+      }
+
+      setSavingEventType(eventType);
+      setPageError("");
+
+      try {
+        await updateMatchEventConfig(matchId, category.eventType, payload);
+
+        const latestConfig = await getMatchEventConfig(matchId, category.eventType);
+        updateCategory(category.eventType, {
+          reservePrice: String(latestConfig.reserve_price),
+          reservationFee: String(latestConfig.reservation_fee_pct),
+          slots: String(latestConfig.slot_count),
+          maxTriggers: String(latestConfig.max_triggers),
+          enabled: true,
+          configured: true,
+          name: latestConfig.event_type_label,
+        });
+
+        await refreshMatchDetail();
+      } catch (error) {
+        const message =
+          error instanceof BroadcasterApiError
+            ? error.message
+            : "Unable to update event config right now.";
+        setPageError(message);
+      } finally {
+        setSavingEventType(null);
+      }
+    },
+    [categories, matchDetail, matchId, refreshMatchDetail, updateCategory],
+  );
+
+  const handleDeleteEventConfig = useCallback(
+    async (eventType: number): Promise<void> => {
+      if (!Number.isFinite(matchId) || !matchDetail) {
+        return;
+      }
+
+      if (matchDetail.state !== 0) {
+        return;
+      }
+
+      const category = categories.find((existing) => existing.eventType === eventType);
+      if (!category || !category.configured) {
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Delete ${category.name.replace(/_/g, " ")} configuration? This action cannot be undone.`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setDeletingEventType(eventType);
+      setPageError("");
+
+      try {
+        await deleteMatchEventConfig(matchId, category.eventType);
+        await refreshMatchDetail();
+      } catch (error) {
+        const message =
+          error instanceof BroadcasterApiError
+            ? error.message
+            : "Unable to delete event config right now.";
+        setPageError(message);
+      } finally {
+        setDeletingEventType(null);
       }
     },
     [categories, matchDetail, matchId, refreshMatchDetail],
@@ -633,19 +780,14 @@ export default function BroadcasterMatchDetailPage() {
     try {
       const pendingConfigs = categories.filter((category) => category.enabled && !category.configured);
       for (const category of pendingConfigs) {
-        const slotCount = Number.parseInt(category.slots, 10);
-        const maxTriggers = Number.parseInt(category.maxTriggers, 10);
-
-        if (!category.reservePrice.trim() || !category.reservationFee.trim() || !Number.isFinite(slotCount) || slotCount < 1 || !Number.isFinite(maxTriggers) || maxTriggers < 1) {
+        const payload = toEventConfigPayload(category);
+        if (!payload) {
           throw new BroadcasterApiError("Fill in valid config values before opening bidding.", 400);
         }
 
         await createMatchEventConfig(matchId, {
           event_type: category.eventType,
-          reserve_price: category.reservePrice.trim(),
-          reservation_fee_pct: category.reservationFee.trim(),
-          slot_count: slotCount,
-          max_triggers: maxTriggers,
+          ...payload,
         });
 
         setCategories((previous) =>
@@ -655,10 +797,10 @@ export default function BroadcasterMatchDetailPage() {
                   ...existing,
                   enabled: true,
                   configured: true,
-                  reservePrice: category.reservePrice.trim(),
-                  reservationFee: category.reservationFee.trim(),
-                  slots: String(slotCount),
-                  maxTriggers: String(maxTriggers),
+                  reservePrice: payload.reserve_price,
+                  reservationFee: payload.reservation_fee_pct,
+                  slots: String(payload.slot_count),
+                  maxTriggers: String(payload.max_triggers),
                 }
               : existing,
           ),
@@ -716,7 +858,7 @@ export default function BroadcasterMatchDetailPage() {
             {matchStatus === "CREATED" && (
               <button 
                 onClick={() => void handleOpenBidding()}
-                disabled={isOpeningBidding}
+                disabled={isOpeningBidding || savingEventType !== null || deletingEventType !== null}
                 className="bg-[#1a1a1a] hover:bg-[#333] disabled:opacity-60 disabled:hover:bg-[#1a1a1a] text-white px-4 py-2 text-xs font-bold uppercase tracking-widest transition-colors"
               >
                 {isOpeningBidding ? "Opening..." : "Open Bidding"}
@@ -797,7 +939,7 @@ export default function BroadcasterMatchDetailPage() {
                           type="checkbox" 
                           checked={cat.enabled} 
                           onChange={() => toggleEvent(cat.eventType)}
-                          disabled={matchStatus !== "CREATED" || cat.configured || isOpeningBidding}
+                          disabled={matchStatus !== "CREATED" || cat.configured || isOpeningBidding || deletingEventType === cat.eventType}
                           className="w-4 h-4 accent-[#1a1a1a]"
                         />
                         <h3 className="text-sm font-bold uppercase tracking-wider text-[#1a1a1a]">
@@ -810,15 +952,38 @@ export default function BroadcasterMatchDetailPage() {
                         ) : null}
                       </div>
 
-                      {cat.enabled && !cat.configured && matchStatus === "CREATED" ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleSaveEventConfig(cat.eventType)}
-                          disabled={isOpeningBidding || savingEventType === cat.eventType}
-                          className="border border-[#CED3DC] bg-[#FCF7F8] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#1a1a1a] hover:bg-[#CED3DC]/30 disabled:opacity-60"
-                        >
-                          {savingEventType === cat.eventType ? "Saving..." : "Save"}
-                        </button>
+                      {cat.enabled && matchStatus === "CREATED" ? (
+                        <div className="flex items-center gap-2">
+                          {cat.configured ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void handleUpdateEventConfig(cat.eventType)}
+                                disabled={isOpeningBidding || deletingEventType === cat.eventType || savingEventType === cat.eventType}
+                                className="border border-[#CED3DC] bg-[#FCF7F8] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#1a1a1a] hover:bg-[#CED3DC]/30 disabled:opacity-60"
+                              >
+                                {savingEventType === cat.eventType ? "Updating..." : "Update"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteEventConfig(cat.eventType)}
+                                disabled={isOpeningBidding || savingEventType === cat.eventType || deletingEventType === cat.eventType}
+                                className="border border-[#A31621]/30 bg-[#FCF7F8] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#A31621] hover:bg-[#A31621]/10 disabled:opacity-60"
+                              >
+                                {deletingEventType === cat.eventType ? "Deleting..." : "Delete"}
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void handleSaveEventConfig(cat.eventType)}
+                              disabled={isOpeningBidding || deletingEventType === cat.eventType || savingEventType === cat.eventType}
+                              className="border border-[#CED3DC] bg-[#FCF7F8] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#1a1a1a] hover:bg-[#CED3DC]/30 disabled:opacity-60"
+                            >
+                              {savingEventType === cat.eventType ? "Saving..." : "Save"}
+                            </button>
+                          )}
+                        </div>
                       ) : null}
                     </div>
 
@@ -829,7 +994,7 @@ export default function BroadcasterMatchDetailPage() {
                           type="number"
                           value={cat.reservePrice}
                           onChange={(e) => updateCategory(cat.eventType, { reservePrice: e.target.value })}
-                          disabled={!cat.enabled || matchStatus !== "CREATED" || cat.configured || isOpeningBidding}
+                          disabled={!cat.enabled || matchStatus !== "CREATED" || isOpeningBidding || savingEventType === cat.eventType || deletingEventType === cat.eventType}
                           className="w-full bg-[#FCF7F8] border border-[#CED3DC] px-3 py-2 text-xs font-mono"
                         />
                       </div>
@@ -839,7 +1004,7 @@ export default function BroadcasterMatchDetailPage() {
                           type="number"
                           value={cat.slots}
                           onChange={(e) => updateCategory(cat.eventType, { slots: e.target.value })}
-                          disabled={!cat.enabled || matchStatus !== "CREATED" || cat.configured || isOpeningBidding}
+                          disabled={!cat.enabled || matchStatus !== "CREATED" || isOpeningBidding || savingEventType === cat.eventType || deletingEventType === cat.eventType}
                           className="w-full bg-[#FCF7F8] border border-[#CED3DC] px-3 py-2 text-xs font-mono"
                         />
                       </div>
@@ -849,7 +1014,7 @@ export default function BroadcasterMatchDetailPage() {
                           type="number"
                           value={cat.reservationFee}
                           onChange={(e) => updateCategory(cat.eventType, { reservationFee: e.target.value })}
-                          disabled={!cat.enabled || matchStatus !== "CREATED" || cat.configured || isOpeningBidding}
+                          disabled={!cat.enabled || matchStatus !== "CREATED" || isOpeningBidding || savingEventType === cat.eventType || deletingEventType === cat.eventType}
                           className="w-full bg-[#FCF7F8] border border-[#CED3DC] px-3 py-2 text-xs font-mono"
                         />
                       </div>
@@ -859,7 +1024,7 @@ export default function BroadcasterMatchDetailPage() {
                           type="number"
                           value={cat.maxTriggers}
                           onChange={(e) => updateCategory(cat.eventType, { maxTriggers: e.target.value })}
-                          disabled={!cat.enabled || matchStatus !== "CREATED" || cat.configured || isOpeningBidding}
+                          disabled={!cat.enabled || matchStatus !== "CREATED" || isOpeningBidding || savingEventType === cat.eventType || deletingEventType === cat.eventType}
                           className="w-full bg-[#FCF7F8] border border-[#CED3DC] px-3 py-2 text-xs font-mono"
                         />
                       </div>

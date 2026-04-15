@@ -378,7 +378,7 @@ export default function AppBroadcasterMatchesPage() {
                     className="w-full bg-white border border-[#CED3DC] px-3 py-2 text-xs font-mono text-[#1a1a1a] focus:outline-none focus:border-[#90C2E7]"
                     disabled={isCreating}
                   />
-                  <p className="mt-1 text-[10px] text-[#4E8098] uppercase tracking-widest">Stored as HH:MM:SS</p>
+                  <p className="mt-1 text-[10px] text-[#4E8098] uppercase tracking-widest">Stored as HH:MM AM/PM</p>
                 </div>
               </div>
 
