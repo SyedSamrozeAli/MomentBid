@@ -2,6 +2,7 @@
 Tests for bidding app: creatives, bids, leaderboard, increase, refunds.
 Also contains the end-to-end integration test for the full demo flow.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -21,23 +22,38 @@ BALANCE_URL = "/api/balance/"
 def creative_url(cid):
     return f"/api/creatives/{cid}/"
 
+
+def creative_approve_url(cid):
+    return f"/api/creatives/{cid}/approve/"
+
+
+def creative_disapprove_url(cid):
+    return f"/api/creatives/{cid}/disapprove/"
+
+
 def bids_url(match_id):
     return f"/api/matches/{match_id}/bids/"
+
 
 def bids_all_url(match_id):
     return f"/api/matches/{match_id}/bids/all/"
 
+
 def leaderboard_url(match_id):
     return f"/api/matches/{match_id}/bids/leaderboard/"
+
 
 def bid_increase_url(match_id, bid_id):
     return f"/api/matches/{match_id}/bids/{bid_id}/increase/"
 
+
 def budget_cap_url(match_id):
     return f"/api/matches/{match_id}/budget-cap/"
 
+
 def refund_claim_url(match_id):
     return f"/api/matches/{match_id}/refunds/claim/"
+
 
 def refunds_url(match_id):
     return f"/api/matches/{match_id}/refunds/"
@@ -50,11 +66,14 @@ def refunds_url(match_id):
 class TestCreativeUpload:
 
     def test_brand_can_upload_creative(self, brand_client):
-        res = brand_client.post(CREATIVES_URL, {
-            "title": "Pepsi Ad 30s",
-            "ad_url": "https://cdn.example.com/pepsi_30s.mp4",
-            "description": "Summer campaign",
-        })
+        res = brand_client.post(
+            CREATIVES_URL,
+            {
+                "title": "Pepsi Ad 30s",
+                "ad_url": "https://cdn.example.com/pepsi_30s.mp4",
+                "description": "Summer campaign",
+            },
+        )
         assert res.status_code == status.HTTP_201_CREATED
         data = res.json()
         assert data["success"] is True
@@ -63,34 +82,48 @@ class TestCreativeUpload:
         assert Creative.objects.filter(title="Pepsi Ad 30s").exists()
 
     def test_creative_starts_as_pending(self, brand_client):
-        brand_client.post(CREATIVES_URL, {
-            "title": "New Ad",
-            "ad_url": "https://cdn.example.com/ad.mp4",
-        })
+        brand_client.post(
+            CREATIVES_URL,
+            {
+                "title": "New Ad",
+                "ad_url": "https://cdn.example.com/ad.mp4",
+            },
+        )
         creative = Creative.objects.get(title="New Ad")
         assert creative.status == Creative.Status.PENDING
 
     def test_creative_requires_title(self, brand_client):
-        res = brand_client.post(CREATIVES_URL, {"ad_url": "https://cdn.example.com/ad.mp4"})
+        res = brand_client.post(
+            CREATIVES_URL, {"ad_url": "https://cdn.example.com/ad.mp4"}
+        )
         assert res.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_creative_requires_valid_url(self, brand_client):
-        res = brand_client.post(CREATIVES_URL, {
-            "title": "Bad Ad",
-            "ad_url": "not-a-url",
-        })
+        res = brand_client.post(
+            CREATIVES_URL,
+            {
+                "title": "Bad Ad",
+                "ad_url": "not-a-url",
+            },
+        )
         assert res.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_creative_requires_brand_user(self, broadcaster_client):
-        res = broadcaster_client.post(CREATIVES_URL, {
-            "title": "Broadcaster Ad",
-            "ad_url": "https://cdn.example.com/ad.mp4",
-        })
+        res = broadcaster_client.post(
+            CREATIVES_URL,
+            {
+                "title": "Broadcaster Ad",
+                "ad_url": "https://cdn.example.com/ad.mp4",
+            },
+        )
         assert res.status_code == status.HTTP_403_FORBIDDEN
 
-    def test_brand_sees_only_own_creatives(self, brand_client, approved_creative, brand2):
+    def test_brand_sees_only_own_creatives(
+        self, brand_client, approved_creative, brand2
+    ):
         other_creative = Creative.objects.create(
-            brand=brand2, title="Other Brand Ad",
+            brand=brand2,
+            title="Other Brand Ad",
             ad_url="https://cdn.example.com/other.mp4",
         )
         res = brand_client.get(CREATIVES_URL)
@@ -99,7 +132,9 @@ class TestCreativeUpload:
         assert approved_creative.id in ids
         assert other_creative.id not in ids
 
-    def test_creative_list_filter_by_status(self, brand_client, approved_creative, pending_creative):
+    def test_creative_list_filter_by_status(
+        self, brand_client, approved_creative, pending_creative
+    ):
         res = brand_client.get(CREATIVES_URL + "?status=approved")
         ids = [c["id"] for c in res.json()["data"]]
         assert approved_creative.id in ids
@@ -118,11 +153,53 @@ class TestCreativeUpload:
 
     def test_creative_detail_404_for_other_brand(self, brand_client, brand2):
         other = Creative.objects.create(
-            brand=brand2, title="Other",
+            brand=brand2,
+            title="Other",
             ad_url="https://cdn.example.com/other.mp4",
         )
         res = brand_client.get(creative_url(other.id))
         assert res.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+class TestCreativeModeration:
+
+    def test_admin_can_approve_uploaded_creative(self, admin_client, pending_creative):
+        pending_creative.rejection_reason = "Initial review hold"
+        pending_creative.save(update_fields=["rejection_reason"])
+
+        res = admin_client.post(creative_approve_url(pending_creative.id))
+        assert res.status_code == status.HTTP_200_OK
+
+        pending_creative.refresh_from_db()
+        assert pending_creative.status == Creative.Status.APPROVED
+        assert pending_creative.rejection_reason == ""
+        assert res.json()["data"]["status"] == Creative.Status.APPROVED
+
+    def test_admin_can_disapprove_uploaded_creative(
+        self, admin_client, pending_creative
+    ):
+        reason = "Violates advertising policy"
+        res = admin_client.post(
+            creative_disapprove_url(pending_creative.id),
+            {"rejection_reason": reason},
+        )
+        assert res.status_code == status.HTTP_200_OK
+
+        pending_creative.refresh_from_db()
+        assert pending_creative.status == Creative.Status.REJECTED
+        assert pending_creative.rejection_reason == reason
+        assert res.json()["data"]["status"] == Creative.Status.REJECTED
+
+    def test_brand_user_cannot_approve_creative(self, brand_client, pending_creative):
+        res = brand_client.post(creative_approve_url(pending_creative.id))
+        assert res.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_broadcaster_user_cannot_disapprove_creative(
+        self, broadcaster_client, pending_creative
+    ):
+        res = broadcaster_client.post(creative_disapprove_url(pending_creative.id))
+        assert res.status_code == status.HTTP_403_FORBIDDEN
 
 
 # ── Bid Placement ─────────────────────────────────────────────────────────────
@@ -134,11 +211,14 @@ class TestBidPlacement:
     def test_brand_can_place_bid(
         self, brand_client, open_match, approved_creative, deposit, mock_blockchain
     ):
-        res = brand_client.post(bids_url(open_match.id), {
-            "event_type": 0,
-            "amount": "100000",
-            "creative_id": approved_creative.id,
-        })
+        res = brand_client.post(
+            bids_url(open_match.id),
+            {
+                "event_type": 0,
+                "amount": "100000",
+                "creative_id": approved_creative.id,
+            },
+        )
         assert res.status_code == status.HTTP_201_CREATED
         data = res.json()
         assert data["success"] is True
@@ -152,32 +232,41 @@ class TestBidPlacement:
         self, brand_client, open_match, approved_creative, deposit
     ):
         # event_config has reserve_price=50000
-        res = brand_client.post(bids_url(open_match.id), {
-            "event_type": 0,
-            "amount": "1000",  # below 50000
-            "creative_id": approved_creative.id,
-        })
+        res = brand_client.post(
+            bids_url(open_match.id),
+            {
+                "event_type": 0,
+                "amount": "1000",  # below 50000
+                "creative_id": approved_creative.id,
+            },
+        )
         assert res.status_code == status.HTTP_400_BAD_REQUEST
         assert "reserve" in res.json()["message"].lower()
 
     def test_bid_without_event_config_rejected(
         self, brand_client, open_match, approved_creative, deposit
     ):
-        res = brand_client.post(bids_url(open_match.id), {
-            "event_type": 7,  # SUPER_OVER — not configured
-            "amount": "100000",
-            "creative_id": approved_creative.id,
-        })
+        res = brand_client.post(
+            bids_url(open_match.id),
+            {
+                "event_type": 7,  # SUPER_OVER — not configured
+                "amount": "100000",
+                "creative_id": approved_creative.id,
+            },
+        )
         assert res.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_pending_creative_cannot_be_used(
         self, brand_client, open_match, pending_creative, deposit
     ):
-        res = brand_client.post(bids_url(open_match.id), {
-            "event_type": 0,
-            "amount": "100000",
-            "creative_id": pending_creative.id,
-        })
+        res = brand_client.post(
+            bids_url(open_match.id),
+            {
+                "event_type": 0,
+                "amount": "100000",
+                "creative_id": pending_creative.id,
+            },
+        )
         assert res.status_code == status.HTTP_400_BAD_REQUEST
         assert "approved" in res.json()["message"].lower()
 
@@ -185,36 +274,46 @@ class TestBidPlacement:
         self, brand_client, open_match, brand2, deposit
     ):
         other_creative = Creative.objects.create(
-            brand=brand2, title="Other Ad",
+            brand=brand2,
+            title="Other Ad",
             ad_url="https://cdn.example.com/ad.mp4",
             status=Creative.Status.APPROVED,
         )
-        res = brand_client.post(bids_url(open_match.id), {
-            "event_type": 0,
-            "amount": "100000",
-            "creative_id": other_creative.id,
-        })
+        res = brand_client.post(
+            bids_url(open_match.id),
+            {
+                "event_type": 0,
+                "amount": "100000",
+                "creative_id": other_creative.id,
+            },
+        )
         assert res.status_code == status.HTTP_404_NOT_FOUND
 
     def test_duplicate_bid_on_same_event_rejected(
         self, brand_client, placed_bid, approved_creative, deposit
     ):
-        res = brand_client.post(bids_url(placed_bid.match.id), {
-            "event_type": placed_bid.event_type,
-            "amount": "200000",
-            "creative_id": approved_creative.id,
-        })
+        res = brand_client.post(
+            bids_url(placed_bid.match.id),
+            {
+                "event_type": placed_bid.event_type,
+                "amount": "200000",
+                "creative_id": approved_creative.id,
+            },
+        )
         assert res.status_code == status.HTTP_409_CONFLICT
 
     def test_insufficient_balance_rejected(
         self, brand_client, open_match, approved_creative
     ):
         # No deposit — balance is 0
-        res = brand_client.post(bids_url(open_match.id), {
-            "event_type": 0,
-            "amount": "100000",
-            "creative_id": approved_creative.id,
-        })
+        res = brand_client.post(
+            bids_url(open_match.id),
+            {
+                "event_type": 0,
+                "amount": "100000",
+                "creative_id": approved_creative.id,
+            },
+        )
         assert res.status_code == status.HTTP_400_BAD_REQUEST
         assert "insufficient" in res.json()["message"].lower()
 
@@ -222,27 +321,40 @@ class TestBidPlacement:
         self, brand_client, match, approved_creative, deposit
     ):
         # match is CREATED, not OPEN
-        res = brand_client.post(bids_url(match.id), {
-            "event_type": 0,
-            "amount": "100000",
-            "creative_id": approved_creative.id,
-        })
+        res = brand_client.post(
+            bids_url(match.id),
+            {
+                "event_type": 0,
+                "amount": "100000",
+                "creative_id": approved_creative.id,
+            },
+        )
         assert res.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_broadcaster_cannot_place_bid(self, broadcaster_client, open_match, event_config):
-        res = broadcaster_client.post(bids_url(open_match.id), {
-            "event_type": 0, "amount": "100000", "creative_id": 1,
-        })
+    def test_broadcaster_cannot_place_bid(
+        self, broadcaster_client, open_match, event_config
+    ):
+        res = broadcaster_client.post(
+            bids_url(open_match.id),
+            {
+                "event_type": 0,
+                "amount": "100000",
+                "creative_id": 1,
+            },
+        )
         assert res.status_code == status.HTTP_403_FORBIDDEN
 
     def test_bid_deducts_from_balance(
         self, brand_client, open_match, approved_creative, deposit, mock_blockchain
     ):
-        brand_client.post(bids_url(open_match.id), {
-            "event_type": 0,
-            "amount": "100000",
-            "creative_id": approved_creative.id,
-        })
+        brand_client.post(
+            bids_url(open_match.id),
+            {
+                "event_type": 0,
+                "amount": "100000",
+                "creative_id": approved_creative.id,
+            },
+        )
         res = brand_client.get(BALANCE_URL)
         assert res.json()["data"]["balance_pkr"] == 400000  # 500000 - 100000
 
@@ -254,11 +366,14 @@ class TestBidPlacement:
         fail_tx.error = "Chain reverted"
         mock_blockchain.place_bid.return_value = fail_tx
 
-        res = brand_client.post(bids_url(open_match.id), {
-            "event_type": 0,
-            "amount": "100000",
-            "creative_id": approved_creative.id,
-        })
+        res = brand_client.post(
+            bids_url(open_match.id),
+            {
+                "event_type": 0,
+                "amount": "100000",
+                "creative_id": approved_creative.id,
+            },
+        )
         assert res.status_code == status.HTTP_400_BAD_REQUEST
         assert not Bid.objects.filter(match=open_match).exists()
 
@@ -280,37 +395,65 @@ class TestBidListing:
         bids = res.json()["data"]
         assert all(b["event_type_label"] is not None for b in bids)
 
-    def test_bids_all_ordered_by_amount_desc(self, brand_client, open_match, brand, brand2, approved_creative, deposit):
-        Deposit.objects.create(brand=brand2, amount_pkr=Decimal("500000"), status="confirmed")
+    def test_bids_all_ordered_by_amount_desc(
+        self, brand_client, open_match, brand, brand2, approved_creative, deposit
+    ):
+        Deposit.objects.create(
+            brand=brand2, amount_pkr=Decimal("500000"), status="confirmed"
+        )
         other_creative = Creative.objects.create(
-            brand=brand2, title="Ad2", ad_url="https://cdn.example.com/ad2.mp4",
+            brand=brand2,
+            title="Ad2",
+            ad_url="https://cdn.example.com/ad2.mp4",
             status=Creative.Status.APPROVED,
         )
         Bid.objects.create(
-            match=open_match, brand=brand, event_type=0,
-            amount=Decimal("100000"), creative=approved_creative, tx_hash="0x" + "a" * 64,
+            match=open_match,
+            brand=brand,
+            event_type=0,
+            amount=Decimal("100000"),
+            creative=approved_creative,
+            tx_hash="0x" + "a" * 64,
         )
         Bid.objects.create(
-            match=open_match, brand=brand2, event_type=0,
-            amount=Decimal("300000"), creative=other_creative, tx_hash="0x" + "b" * 64,
+            match=open_match,
+            brand=brand2,
+            event_type=0,
+            amount=Decimal("300000"),
+            creative=other_creative,
+            tx_hash="0x" + "b" * 64,
         )
         res = brand_client.get(bids_all_url(open_match.id) + "?ordering=-amount")
         amounts = [Decimal(b["amount"]) for b in res.json()["data"]]
         assert amounts == sorted(amounts, reverse=True)
 
-    def test_leaderboard_groups_by_event_type(self, brand_client, open_match, brand, brand2, approved_creative, deposit):
-        Deposit.objects.create(brand=brand2, amount_pkr=Decimal("500000"), status="confirmed")
+    def test_leaderboard_groups_by_event_type(
+        self, brand_client, open_match, brand, brand2, approved_creative, deposit
+    ):
+        Deposit.objects.create(
+            brand=brand2, amount_pkr=Decimal("500000"), status="confirmed"
+        )
         other_creative = Creative.objects.create(
-            brand=brand2, title="Ad2", ad_url="https://cdn.example.com/ad2.mp4",
+            brand=brand2,
+            title="Ad2",
+            ad_url="https://cdn.example.com/ad2.mp4",
             status=Creative.Status.APPROVED,
         )
         Bid.objects.create(
-            match=open_match, brand=brand, event_type=0,
-            amount=Decimal("100000"), creative=approved_creative, tx_hash="0x" + "a" * 64,
+            match=open_match,
+            brand=brand,
+            event_type=0,
+            amount=Decimal("100000"),
+            creative=approved_creative,
+            tx_hash="0x" + "a" * 64,
         )
         Bid.objects.create(
-            match=open_match, brand=brand2, event_type=0,
-            amount=Decimal("200000"), creative=other_creative, tx_hash="0x" + "b" * 64,
+            match=open_match,
+            brand=brand2,
+            event_type=0,
+            amount=Decimal("200000"),
+            creative=other_creative,
+            tx_hash="0x" + "b" * 64,
         )
         res = brand_client.get(leaderboard_url(open_match.id))
         assert res.status_code == status.HTTP_200_OK
@@ -354,9 +497,7 @@ class TestBidIncrease:
         )
         assert res.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_cannot_increase_other_brands_bid(
-        self, brand_client2, placed_bid
-    ):
+    def test_cannot_increase_other_brands_bid(self, brand_client2, placed_bid):
         res = brand_client2.patch(
             bid_increase_url(placed_bid.match.id, placed_bid.id),
             {"additional_amount": "50000"},
@@ -425,9 +566,14 @@ class TestRefundClaim:
         self, brand_client, brand, broadcaster, mock_blockchain
     ):
         cancelled_match = Match.objects.create(
-            broadcaster=broadcaster, team_a="A", team_b="B",
-            venue="V", match_date="2026-05-10", match_time="19:00:00",
-            on_chain_match_id=99, state=Match.State.CANCELLED,
+            broadcaster=broadcaster,
+            team_a="A",
+            team_b="B",
+            venue="V",
+            match_date="2026-05-10",
+            match_time="19:00:00",
+            on_chain_match_id=99,
+            state=Match.State.CANCELLED,
         )
         res = brand_client.post(refund_claim_url(cancelled_match.id))
         assert res.status_code == status.HTTP_201_CREATED
@@ -437,14 +583,14 @@ class TestRefundClaim:
     ):
         placed_bid.match = completed_match
         placed_bid.save()
-        Refund.objects.create(match=completed_match, brand=brand, amount=Decimal("100000"))
+        Refund.objects.create(
+            match=completed_match, brand=brand, amount=Decimal("100000")
+        )
 
         res = brand_client.post(refund_claim_url(completed_match.id))
         assert res.status_code == status.HTTP_409_CONFLICT
 
-    def test_cannot_claim_refund_on_active_match(
-        self, brand_client, active_match
-    ):
+    def test_cannot_claim_refund_on_active_match(self, brand_client, active_match):
         res = brand_client.post(refund_claim_url(active_match.id))
         assert res.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -452,8 +598,12 @@ class TestRefundClaim:
         res = brand_client.post(refund_claim_url(open_match.id))
         assert res.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_refund_list_shows_brand_refunds(self, brand_client, completed_match, brand):
-        Refund.objects.create(match=completed_match, brand=brand, amount=Decimal("80000"))
+    def test_refund_list_shows_brand_refunds(
+        self, brand_client, completed_match, brand
+    ):
+        Refund.objects.create(
+            match=completed_match, brand=brand, amount=Decimal("80000")
+        )
         res = brand_client.get(refunds_url(completed_match.id))
         assert res.status_code == status.HTTP_200_OK
         assert len(res.json()["data"]) == 1
@@ -462,7 +612,9 @@ class TestRefundClaim:
     def test_refund_list_does_not_show_other_brand_refunds(
         self, brand_client, completed_match, brand2
     ):
-        Refund.objects.create(match=completed_match, brand=brand2, amount=Decimal("80000"))
+        Refund.objects.create(
+            match=completed_match, brand=brand2, amount=Decimal("80000")
+        )
         res = brand_client.get(refunds_url(completed_match.id))
         # brand_user's brand has no refund
         assert res.json()["data"] == [] or all(
@@ -501,8 +653,14 @@ class TestFullDemoFlow:
     """
 
     def test_complete_psl_demo_flow(
-        self, api_client, mock_blockchain, broadcaster_client, admin_client,
-        broadcaster, brand, brand2
+        self,
+        api_client,
+        mock_blockchain,
+        broadcaster_client,
+        admin_client,
+        broadcaster,
+        brand,
+        brand2,
     ):
         # ── Setup wallets ──────────────────────────────────────────────────
         mock_blockchain.generate_wallet.side_effect = [
@@ -512,27 +670,35 @@ class TestFullDemoFlow:
 
         # ── Step 1: Create match ───────────────────────────────────────────
         mock_blockchain.create_match.return_value = MagicMock(
-            success=True, tx_hash="0x" + "1" * 64, gas_used=100000,
-            data={"match_id": 42}
+            success=True,
+            tx_hash="0x" + "1" * 64,
+            gas_used=100000,
+            data={"match_id": 42},
         )
-        res = broadcaster_client.post("/api/matches/", {
-            "team_a": "Lahore Qalandars",
-            "team_b": "Karachi Kings",
-            "venue": "Gaddafi Stadium",
-            "match_date": "2026-05-20",
-            "match_time": "19:00:00",
-        })
+        res = broadcaster_client.post(
+            "/api/matches/",
+            {
+                "team_a": "Lahore Qalandars",
+                "team_b": "Karachi Kings",
+                "venue": "Gaddafi Stadium",
+                "match_date": "2026-05-20",
+                "match_time": "19:00:00",
+            },
+        )
         assert res.status_code == status.HTTP_201_CREATED
         match_id = res.json()["data"]["id"]
 
         # ── Step 2: Configure event ────────────────────────────────────────
-        res = broadcaster_client.post(f"/api/matches/{match_id}/event-configs/", {
-            "event_type": 0,
-            "reserve_price": "50000",
-            "reservation_fee_pct": "5",
-            "slot_count": 3,
-            "max_triggers": 40,
-        })
+        res = broadcaster_client.post(
+            f"/api/matches/{match_id}/event-configs/",
+            {
+                "event_type": 0,
+                "reserve_price": "50000",
+                "reservation_fee_pct": "5",
+                "slot_count": 3,
+                "max_triggers": 40,
+            },
+        )
         assert res.status_code == status.HTTP_201_CREATED
 
         # ── Step 3: Open bidding ───────────────────────────────────────────
@@ -548,30 +714,41 @@ class TestFullDemoFlow:
         brand_a_user = brand.users.first()
         if brand_a_user:
             refresh = RefreshToken.for_user(brand_a_user)
-            brand_a_client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
+            brand_a_client.credentials(
+                HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}"
+            )
 
-            Deposit.objects.create(brand=brand, amount_pkr=Decimal("500000"), status="confirmed")
+            Deposit.objects.create(
+                brand=brand, amount_pkr=Decimal("500000"), status="confirmed"
+            )
 
             # ── Step 5: Brand A upload creative ───────────────────────────
             creative_a = Creative.objects.create(
-                brand=brand, title="Pepsi Summer Ad",
+                brand=brand,
+                title="Pepsi Summer Ad",
                 ad_url="https://cdn.example.com/pepsi.mp4",
                 status=Creative.Status.APPROVED,
             )
 
             # ── Step 6: Brand A place bid ──────────────────────────────────
-            res = brand_a_client.post(f"/api/matches/{match_id}/bids/", {
-                "event_type": 0,
-                "amount": "300000",
-                "creative_id": creative_a.id,
-            })
+            res = brand_a_client.post(
+                f"/api/matches/{match_id}/bids/",
+                {
+                    "event_type": 0,
+                    "amount": "300000",
+                    "creative_id": creative_a.id,
+                },
+            )
             assert res.status_code == status.HTTP_201_CREATED
             bid_a_id = res.json()["data"]["id"]
 
         # ── Step 7: Brand B deposit + bid ─────────────────────────────────
-        Deposit.objects.create(brand=brand2, amount_pkr=Decimal("500000"), status="confirmed")
+        Deposit.objects.create(
+            brand=brand2, amount_pkr=Decimal("500000"), status="confirmed"
+        )
         creative_b = Creative.objects.create(
-            brand=brand2, title="KFC Hot Deal Ad",
+            brand=brand2,
+            title="KFC Hot Deal Ad",
             ad_url="https://cdn.example.com/kfc.mp4",
             status=Creative.Status.APPROVED,
         )
@@ -579,13 +756,18 @@ class TestFullDemoFlow:
         if brand_b_user:
             brand_b_client = APIClient()
             refresh = RefreshToken.for_user(brand_b_user)
-            brand_b_client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
+            brand_b_client.credentials(
+                HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}"
+            )
 
-            res = brand_b_client.post(f"/api/matches/{match_id}/bids/", {
-                "event_type": 0,
-                "amount": "400000",
-                "creative_id": creative_b.id,
-            })
+            res = brand_b_client.post(
+                f"/api/matches/{match_id}/bids/",
+                {
+                    "event_type": 0,
+                    "amount": "400000",
+                    "creative_id": creative_b.id,
+                },
+            )
             assert res.status_code == status.HTTP_201_CREATED
 
         # ── Step 8: Admin starts match ─────────────────────────────────────
@@ -594,7 +776,9 @@ class TestFullDemoFlow:
         assert Match.objects.get(pk=match_id).state == Match.State.ACTIVE
 
         # ── Step 9: Admin triggers event ───────────────────────────────────
-        res = admin_client.post(f"/api/simulator/{match_id}/trigger-event/", {"event_type": 0})
+        res = admin_client.post(
+            f"/api/simulator/{match_id}/trigger-event/", {"event_type": 0}
+        )
         assert res.status_code == status.HTTP_200_OK
         assert res.json()["data"]["trigger_number"] == 1
 
@@ -605,8 +789,10 @@ class TestFullDemoFlow:
 
         # ── Step 11: Brands claim refunds ──────────────────────────────────
         mock_blockchain.claim_refund.return_value = MagicMock(
-            success=True, tx_hash="0x" + "r" * 64, gas_used=50000,
-            data={"refund_amount": 300000}
+            success=True,
+            tx_hash="0x" + "r" * 64,
+            gas_used=50000,
+            data={"refund_amount": 300000},
         )
         if brand.users.first():
             res = brand_a_client.post(f"/api/matches/{match_id}/refunds/claim/")
@@ -620,6 +806,7 @@ class TestFullDemoFlow:
 
         # ── Summary: all core flows completed without errors ────────────────
         assert Match.objects.get(pk=match_id).state == Match.State.COMPLETED
-        assert MatchEventConfig.objects.get(
-            match_id=match_id, event_type=0
-        ).trigger_count == 1
+        assert (
+            MatchEventConfig.objects.get(match_id=match_id, event_type=0).trigger_count
+            == 1
+        )

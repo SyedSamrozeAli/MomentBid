@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from apps.accounts.models import User
-from apps.accounts.permissions import IsBrandUser
+from apps.accounts.permissions import IsAdminRole, IsBrandUser
 from apps.bidding.models import AuctionResult, Bid, Creative, Refund
 from apps.bidding.serializers import (
     AuctionResultSerializer,
@@ -17,6 +17,7 @@ from apps.bidding.serializers import (
     BidIncreaseSerializer,
     BidListSerializer,
     BudgetCapSerializer,
+    CreativeDisapproveSerializer,
     CreativeCreateSerializer,
     CreativeSerializer,
     RefundSerializer,
@@ -41,7 +42,9 @@ class MatchBidListView(APIView):
 
     def get(self, request, match_id: int):
         get_object_or_404(Match, pk=match_id)
-        qs = Bid.objects.select_related("brand").filter(match_id=match_id)
+        qs = Bid.objects.select_related("brand").filter(
+            match_id=match_id, is_cancelled=False
+        )
 
         event_type = request.query_params.get("event_type")
         if event_type is not None:
@@ -69,9 +72,11 @@ class MatchBidLeaderboardView(APIView):
 
     def get(self, request, match_id: int):
         get_object_or_404(Match, pk=match_id)
-        qs = Bid.objects.select_related("brand").filter(
-            match_id=match_id
-        ).order_by("event_type", "-amount")
+        qs = (
+            Bid.objects.select_related("brand")
+            .filter(match_id=match_id, is_cancelled=False)
+            .order_by("event_type", "-amount")
+        )
 
         event_type = request.query_params.get("event_type")
         if event_type is not None:
@@ -103,7 +108,9 @@ class MatchBidListCreateView(APIView):
 
     def get(self, request, match_id: int):
         match = get_object_or_404(Match, pk=match_id)
-        bids = Bid.objects.select_related("brand", "creative").filter(match=match)
+        bids = Bid.objects.select_related("brand", "creative").filter(
+            match=match, is_cancelled=False
+        )
         return CustomResponse.success(data=BidDetailedSerializer(bids, many=True).data)
 
     def post(self, request, match_id: int):
@@ -158,7 +165,10 @@ class MatchBidListCreateView(APIView):
             )
 
         bid_exists = Bid.objects.filter(
-            match=match, brand=request.user.brand, event_type=payload["event_type"]
+            match=match,
+            brand=request.user.brand,
+            event_type=payload["event_type"],
+            is_cancelled=False,
         ).exists()
         if bid_exists:
             return CustomResponse.error(
@@ -173,10 +183,27 @@ class MatchBidListCreateView(APIView):
         from apps.bidding.models import Refund as _Refund
 
         _brand = request.user.brand
-        _deposited = _Deposit.objects.filter(brand=_brand, status="confirmed").aggregate(t=_Sum("amount_pkr"))["t"] or 0
-        _escrowed  = Bid.objects.filter(brand=_brand, is_settled=False).aggregate(t=_Sum("amount"))["t"] or 0
-        _spent     = Bid.objects.filter(brand=_brand, is_settled=True).aggregate(t=_Sum("amount"))["t"] or 0
-        _refunded  = _Refund.objects.filter(brand=_brand).aggregate(t=_Sum("amount"))["t"] or 0
+        _deposited = (
+            _Deposit.objects.filter(brand=_brand, status="confirmed").aggregate(
+                t=_Sum("amount_pkr")
+            )["t"]
+            or 0
+        )
+        _escrowed = (
+            Bid.objects.filter(
+                brand=_brand, is_settled=False, is_cancelled=False
+            ).aggregate(t=_Sum("amount"))["t"]
+            or 0
+        )
+        _spent = (
+            Bid.objects.filter(
+                brand=_brand, is_settled=True, is_cancelled=False
+            ).aggregate(t=_Sum("amount"))["t"]
+            or 0
+        )
+        _refunded = (
+            _Refund.objects.filter(brand=_brand).aggregate(t=_Sum("amount"))["t"] or 0
+        )
         _available = int(_deposited - _escrowed - _spent + _refunded)
 
         if _available < int(payload["amount"]):
@@ -308,6 +335,75 @@ class MatchBidIncreaseView(APIView):
         bid = Bid.objects.select_related("creative").get(pk=bid.pk)
         return CustomResponse.success(
             data=BidDetailedSerializer(bid).data, message="Bid increased"
+        )
+
+
+class MatchBidCancelView(APIView):
+    """
+    DELETE /matches/{id}/bids/{bid_id}/cancel/
+    Cancel an active bid. Only allowed while match is OPEN (state=1).
+    Brand recovers escrowed balance immediately in DB.
+    On real chain, MBT is returned via claimRefund when match ends.
+    """
+
+    permission_classes = [IsBrandUser]
+
+    def delete(self, request, match_id: int, bid_id: int):
+        match = get_object_or_404(Match, pk=match_id)
+
+        if match.state != Match.State.OPEN:
+            return CustomResponse.error(
+                message="Bids can only be cancelled while match is OPEN",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        bid = get_object_or_404(Bid, pk=bid_id, match=match, brand=request.user.brand)
+
+        if bid.is_cancelled:
+            return CustomResponse.error(
+                message="Bid already cancelled",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
+        if bid.is_settled:
+            return CustomResponse.error(
+                message="Cannot cancel a settled bid",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            bid.is_cancelled = True
+            bid.save(update_fields=["is_cancelled"])
+
+            Transaction.objects.create(
+                brand=request.user.brand,
+                initiated_by=request.user,
+                action="cancel_bid",
+                tx_hash="",
+                status=Transaction.Status.CONFIRMED,
+                gas_used=0,
+                metadata={
+                    "match_id": match.id,
+                    "event_type": bid.event_type,
+                    "amount": str(bid.amount),
+                },
+            )
+
+        from apps.indexer.push import push_match_event
+
+        push_match_event(
+            match.id,
+            "bid_cancelled",
+            {
+                "brand": request.user.brand.name,
+                "event_type": bid.event_type,
+                "amount": str(bid.amount),
+            },
+        )
+
+        return CustomResponse.success(
+            message="Bid cancelled. Balance restored.",
+            status_code=status.HTTP_200_OK,
         )
 
 
@@ -510,3 +606,41 @@ class CreativeDetailView(APIView):
     def get(self, request, creative_id: int):
         creative = get_object_or_404(Creative, pk=creative_id, brand=request.user.brand)
         return CustomResponse.success(data=CreativeSerializer(creative).data)
+
+
+class CreativeApproveView(APIView):
+    """POST /creatives/{id}/approve/ — admin approves uploaded creative."""
+
+    permission_classes = [IsAdminRole]
+
+    def post(self, request, creative_id: int):
+        creative = get_object_or_404(Creative, pk=creative_id)
+        creative.status = Creative.Status.APPROVED
+        creative.rejection_reason = ""
+        creative.save(update_fields=["status", "rejection_reason", "updated_at"])
+        return CustomResponse.success(
+            data=CreativeSerializer(creative).data,
+            message="Creative approved",
+        )
+
+
+class CreativeDisapproveView(APIView):
+    """POST /creatives/{id}/disapprove/ — admin disapproves uploaded creative."""
+
+    permission_classes = [IsAdminRole]
+
+    def post(self, request, creative_id: int):
+        serializer = CreativeDisapproveSerializer(data=request.data)
+        if not serializer.is_valid():
+            return serializer_validation_error_response(serializer)
+
+        creative = get_object_or_404(Creative, pk=creative_id)
+        creative.status = Creative.Status.REJECTED
+        creative.rejection_reason = serializer.validated_data.get(
+            "rejection_reason", ""
+        )
+        creative.save(update_fields=["status", "rejection_reason", "updated_at"])
+        return CustomResponse.success(
+            data=CreativeSerializer(creative).data,
+            message="Creative disapproved",
+        )

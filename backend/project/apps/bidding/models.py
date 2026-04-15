@@ -53,6 +53,8 @@ class Bid(models.Model):
     )
     tx_hash = models.CharField(max_length=66, blank=True)
     is_settled = models.BooleanField(default=False)
+    is_cancelled = models.BooleanField(default=False)
+    cancel_tx_hash = models.CharField(max_length=66, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

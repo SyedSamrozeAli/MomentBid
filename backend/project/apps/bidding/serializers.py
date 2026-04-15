@@ -64,6 +64,17 @@ class CreativeCreateSerializer(serializers.Serializer):
     )
 
 
+class CreativeDisapproveSerializer(serializers.Serializer):
+    rejection_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+        error_messages={
+            "max_length": "Rejection reason cannot exceed 1000 characters.",
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bid
 # ---------------------------------------------------------------------------
@@ -135,7 +146,15 @@ class BidListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Bid
-        fields = ("id", "brand", "amount", "is_settled", "event_type_label", "created_at")
+        fields = (
+            "id",
+            "brand",
+            "amount",
+            "is_settled",
+            "is_cancelled",
+            "event_type_label",
+            "created_at",
+        )
 
     def get_event_type_label(self, obj: Bid) -> str:
         return _event_type_label(obj.event_type)
@@ -159,6 +178,7 @@ class BidDetailedSerializer(serializers.ModelSerializer):
             "creative",
             "tx_hash",
             "is_settled",
+            "is_cancelled",
             "created_at",
         )
 

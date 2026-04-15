@@ -89,7 +89,7 @@ class BalanceView(APIView):
             or 0
         )
         escrowed = (
-            Bid.objects.filter(brand=brand, is_settled=False).aggregate(
+            Bid.objects.filter(brand=brand, is_settled=False, is_cancelled=False).aggregate(
                 total=Sum("amount")
             )["total"]
             or 0

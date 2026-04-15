@@ -272,7 +272,7 @@ class BrandDashboardView(APIView):
             or 0
         )
         total_spent = (
-            Bid.objects.filter(brand=brand, is_settled=True).aggregate(
+            Bid.objects.filter(brand=brand, is_settled=True, is_cancelled=False).aggregate(
                 total=Sum("amount")
             )["total"]
             or 0
@@ -281,9 +281,9 @@ class BrandDashboardView(APIView):
             Refund.objects.filter(brand=brand).aggregate(total=Sum("amount"))["total"]
             or 0
         )
-        active_bids_count = Bid.objects.filter(brand=brand, is_settled=False).count()
+        active_bids_count = Bid.objects.filter(brand=brand, is_settled=False, is_cancelled=False).count()
         escrowed_total = (
-            Bid.objects.filter(brand=brand, is_settled=False).aggregate(
+            Bid.objects.filter(brand=brand, is_settled=False, is_cancelled=False).aggregate(
                 total=Sum("amount")
             )["total"]
             or 0
