@@ -1,13 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-backend/project}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR_ENV="${PROJECT_DIR:-}"
 
-if [[ ! -f "${PROJECT_DIR}/manage.py" ]]; then
-  echo "ERROR: manage.py not found at ${PROJECT_DIR}. Set PROJECT_DIR env var correctly."
+declare -a CANDIDATES
+if [[ -n "${PROJECT_DIR_ENV}" ]]; then
+  CANDIDATES=("${PROJECT_DIR_ENV}" "${SCRIPT_DIR}/${PROJECT_DIR_ENV}")
+else
+  CANDIDATES=(
+    "${SCRIPT_DIR}/project"
+    "${SCRIPT_DIR}/backend/project"
+    "project"
+    "backend/project"
+  )
+fi
+
+PROJECT_DIR=""
+for candidate in "${CANDIDATES[@]}"; do
+  if [[ -f "${candidate}/manage.py" ]]; then
+    PROJECT_DIR="${candidate}"
+    break
+  fi
+done
+
+if [[ -z "${PROJECT_DIR}" ]]; then
+  echo "ERROR: manage.py not found."
+  echo "Checked paths:"
+  for candidate in "${CANDIDATES[@]}"; do
+    echo "  - ${candidate}/manage.py"
+  done
+  echo "Current working directory: $(pwd)"
+  echo "Script directory: ${SCRIPT_DIR}"
+  echo "Set PROJECT_DIR env var explicitly if needed."
   exit 1
 fi
 
+echo "[render_start] Using project dir: ${PROJECT_DIR}"
 cd "${PROJECT_DIR}"
 
 echo "[render_start] Running migrations..."
