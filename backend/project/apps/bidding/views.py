@@ -12,6 +12,7 @@ from apps.accounts.permissions import IsAdminRole, IsBrandUser
 from apps.bidding.models import AuctionResult, Bid, Creative, Refund
 from apps.bidding.serializers import (
     AuctionResultSerializer,
+    BrandBidHistorySerializer,
     BidCreateSerializer,
     BidDetailedSerializer,
     BidIncreaseSerializer,
@@ -27,6 +28,33 @@ from apps.matches.models import Match, MatchEventConfig
 from apps.wallets.models import Transaction
 from utils.custom_response import CustomResponse
 from utils.validation import serializer_validation_error_response
+
+
+ACTIVE_BID_MATCH_STATES = (Match.State.OPEN, Match.State.ACTIVE)
+ALLOWED_BID_ORDERING = ("created_at", "-created_at", "amount", "-amount")
+
+
+def _apply_brand_bid_filters(request, qs):
+    """Apply shared query filters for brand bid history endpoints."""
+    match_id = request.query_params.get("match_id")
+    if match_id is not None:
+        try:
+            qs = qs.filter(match_id=int(match_id))
+        except (TypeError, ValueError):
+            return None, CustomResponse.error(message="match_id must be an integer")
+
+    event_type = request.query_params.get("event_type")
+    if event_type is not None:
+        try:
+            qs = qs.filter(event_type=int(event_type))
+        except (TypeError, ValueError):
+            return None, CustomResponse.error(message="event_type must be an integer")
+
+    ordering = request.query_params.get("ordering", "-created_at")
+    if ordering in ALLOWED_BID_ORDERING:
+        qs = qs.order_by(ordering)
+
+    return qs, None
 
 
 class MatchBidListView(APIView):
@@ -101,6 +129,85 @@ class MatchBidLeaderboardView(APIView):
             entry["total_escrowed"] += int(bid.amount)
 
         return CustomResponse.success(data=list(grouped.values()))
+
+
+class BrandBidHistoryView(APIView):
+    """Return logged-in brand bids with optional status filters for UI tabs."""
+
+    permission_classes = [IsBrandUser]
+
+    def get(self, request):
+        qs = Bid.objects.select_related("match", "creative").filter(
+            brand=request.user.brand
+        )
+
+        status_filter = request.query_params.get("status", "all").strip().lower()
+        if status_filter == "active":
+            qs = qs.filter(
+                is_cancelled=False,
+                is_settled=False,
+                match__state__in=ACTIVE_BID_MATCH_STATES,
+            )
+        elif status_filter == "cancelled":
+            qs = qs.filter(is_cancelled=True)
+        elif status_filter == "settled":
+            qs = qs.filter(is_cancelled=False, is_settled=True)
+        elif status_filter in {"", "all"}:
+            pass
+        else:
+            return CustomResponse.error(
+                message="status must be one of: all, active, cancelled, settled"
+            )
+
+        qs, error_response = _apply_brand_bid_filters(request, qs)
+        if error_response:
+            return error_response
+
+        return CustomResponse.success(
+            data=BrandBidHistorySerializer(qs, many=True).data
+        )
+
+
+class BrandActiveBidListView(APIView):
+    """Return active bids for the logged-in brand."""
+
+    permission_classes = [IsBrandUser]
+
+    def get(self, request):
+        qs = Bid.objects.select_related("match", "creative").filter(
+            brand=request.user.brand,
+            is_cancelled=False,
+            is_settled=False,
+            match__state__in=ACTIVE_BID_MATCH_STATES,
+        )
+
+        qs, error_response = _apply_brand_bid_filters(request, qs)
+        if error_response:
+            return error_response
+
+        return CustomResponse.success(
+            data=BrandBidHistorySerializer(qs, many=True).data
+        )
+
+
+class BrandCancelledBidListView(APIView):
+    """Return cancelled bids for the logged-in brand."""
+
+    permission_classes = [IsBrandUser]
+
+    def get(self, request):
+        qs = Bid.objects.select_related("match", "creative").filter(
+            brand=request.user.brand,
+            is_cancelled=True,
+        )
+
+        qs, error_response = _apply_brand_bid_filters(request, qs)
+        if error_response:
+            return error_response
+
+        return CustomResponse.success(
+            data=BrandBidHistorySerializer(qs, many=True).data
+        )
 
 
 class MatchBidListCreateView(APIView):

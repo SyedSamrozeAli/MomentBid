@@ -197,6 +197,7 @@ class LoginView(APIView):
             data={
                 "username": user.username,
                 "email": user.email,
+                "role": user.role,
                 "logo": logo,
                 "brand_name": brand_name,
                 "broadcaster_name": broadcaster_name,
@@ -272,20 +273,22 @@ class BrandDashboardView(APIView):
             or 0
         )
         total_spent = (
-            Bid.objects.filter(brand=brand, is_settled=True, is_cancelled=False).aggregate(
-                total=Sum("amount")
-            )["total"]
+            Bid.objects.filter(
+                brand=brand, is_settled=True, is_cancelled=False
+            ).aggregate(total=Sum("amount"))["total"]
             or 0
         )
         total_refunded = (
             Refund.objects.filter(brand=brand).aggregate(total=Sum("amount"))["total"]
             or 0
         )
-        active_bids_count = Bid.objects.filter(brand=brand, is_settled=False, is_cancelled=False).count()
+        active_bids_count = Bid.objects.filter(
+            brand=brand, is_settled=False, is_cancelled=False
+        ).count()
         escrowed_total = (
-            Bid.objects.filter(brand=brand, is_settled=False, is_cancelled=False).aggregate(
-                total=Sum("amount")
-            )["total"]
+            Bid.objects.filter(
+                brand=brand, is_settled=False, is_cancelled=False
+            ).aggregate(total=Sum("amount"))["total"]
             or 0
         )
         # Balance = deposited - all escrowed (active bids) - permanently spent + refunded

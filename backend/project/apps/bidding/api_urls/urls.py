@@ -2,6 +2,9 @@ from django.urls import path
 
 from apps.bidding.views import (
     AuctionResultListView,
+    BrandActiveBidListView,
+    BrandBidHistoryView,
+    BrandCancelledBidListView,
     BudgetCapView,
     CreativeApproveView,
     CreativeDetailView,
@@ -17,6 +20,13 @@ from apps.bidding.views import (
 )
 
 urlpatterns = [
+    path("bids/me/history/", BrandBidHistoryView.as_view(), name="my-bids-history"),
+    path("bids/me/active/", BrandActiveBidListView.as_view(), name="my-active-bids"),
+    path(
+        "bids/me/cancelled/",
+        BrandCancelledBidListView.as_view(),
+        name="my-cancelled-bids",
+    ),
     # Creatives (brand uploads ads before bidding)
     path("creatives/", CreativeListCreateView.as_view(), name="creatives"),
     path(

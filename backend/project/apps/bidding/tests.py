@@ -59,6 +59,18 @@ def refunds_url(match_id):
     return f"/api/matches/{match_id}/refunds/"
 
 
+def my_bids_history_url():
+    return "/api/bids/me/history/"
+
+
+def my_active_bids_url():
+    return "/api/bids/me/active/"
+
+
+def my_cancelled_bids_url():
+    return "/api/bids/me/cancelled/"
+
+
 # ── Creatives ─────────────────────────────────────────────────────────────────
 
 
@@ -520,6 +532,211 @@ class TestBidIncrease:
         assert res.status_code == status.HTTP_400_BAD_REQUEST
         placed_bid.refresh_from_db()
         assert placed_bid.amount == original
+
+
+@pytest.mark.django_db
+class TestBrandBidHistoryEndpoints:
+
+    def test_brand_history_returns_only_logged_in_brand_bids(
+        self,
+        brand_client,
+        brand,
+        brand2,
+        open_match,
+        approved_creative,
+    ):
+        other_creative = Creative.objects.create(
+            brand=brand2,
+            title="Other Brand Ad",
+            ad_url="https://cdn.example.com/other-brand-ad.mp4",
+            status=Creative.Status.APPROVED,
+        )
+
+        own_bid = Bid.objects.create(
+            match=open_match,
+            brand=brand,
+            event_type=0,
+            amount=Decimal("110000"),
+            creative=approved_creative,
+            tx_hash="0x" + "1" * 64,
+        )
+        Bid.objects.create(
+            match=open_match,
+            brand=brand2,
+            event_type=0,
+            amount=Decimal("210000"),
+            creative=other_creative,
+            tx_hash="0x" + "2" * 64,
+        )
+
+        res = brand_client.get(my_bids_history_url())
+        assert res.status_code == status.HTTP_200_OK
+        data = res.json()["data"]
+        ids = {item["id"] for item in data}
+        assert own_bid.id in ids
+        assert all(item["match_id"] == open_match.id for item in data)
+
+    def test_brand_active_bids_endpoint_filters_correctly(
+        self,
+        brand_client,
+        brand,
+        broadcaster,
+        approved_creative,
+    ):
+        open_match = Match.objects.create(
+            broadcaster=broadcaster,
+            team_a="A",
+            team_b="B",
+            venue="V",
+            match_date="2026-05-20",
+            match_time="19:00:00",
+            on_chain_match_id=301,
+            state=Match.State.OPEN,
+        )
+        active_match = Match.objects.create(
+            broadcaster=broadcaster,
+            team_a="C",
+            team_b="D",
+            venue="V",
+            match_date="2026-05-21",
+            match_time="19:00:00",
+            on_chain_match_id=302,
+            state=Match.State.ACTIVE,
+        )
+        completed_match = Match.objects.create(
+            broadcaster=broadcaster,
+            team_a="E",
+            team_b="F",
+            venue="V",
+            match_date="2026-05-22",
+            match_time="19:00:00",
+            on_chain_match_id=303,
+            state=Match.State.COMPLETED,
+        )
+
+        active_bid_open = Bid.objects.create(
+            match=open_match,
+            brand=brand,
+            event_type=0,
+            amount=Decimal("100000"),
+            creative=approved_creative,
+            tx_hash="0x" + "a" * 64,
+            is_settled=False,
+            is_cancelled=False,
+        )
+        active_bid_live = Bid.objects.create(
+            match=active_match,
+            brand=brand,
+            event_type=1,
+            amount=Decimal("120000"),
+            creative=approved_creative,
+            tx_hash="0x" + "b" * 64,
+            is_settled=False,
+            is_cancelled=False,
+        )
+        Bid.objects.create(
+            match=completed_match,
+            brand=brand,
+            event_type=2,
+            amount=Decimal("90000"),
+            creative=approved_creative,
+            tx_hash="0x" + "c" * 64,
+            is_settled=False,
+            is_cancelled=False,
+        )
+        Bid.objects.create(
+            match=open_match,
+            brand=brand,
+            event_type=3,
+            amount=Decimal("95000"),
+            creative=approved_creative,
+            tx_hash="0x" + "d" * 64,
+            is_settled=False,
+            is_cancelled=True,
+        )
+
+        res = brand_client.get(my_active_bids_url())
+        assert res.status_code == status.HTTP_200_OK
+        data = res.json()["data"]
+        ids = {item["id"] for item in data}
+        assert ids == {active_bid_open.id, active_bid_live.id}
+        assert all(item["bid_status"] == "active" for item in data)
+
+    def test_brand_cancelled_bids_endpoint_returns_cancelled_only(
+        self,
+        brand_client,
+        brand,
+        open_match,
+        approved_creative,
+    ):
+        cancelled_bid = Bid.objects.create(
+            match=open_match,
+            brand=brand,
+            event_type=0,
+            amount=Decimal("130000"),
+            creative=approved_creative,
+            tx_hash="0x" + "e" * 64,
+            is_cancelled=True,
+            is_settled=False,
+        )
+        Bid.objects.create(
+            match=open_match,
+            brand=brand,
+            event_type=1,
+            amount=Decimal("140000"),
+            creative=approved_creative,
+            tx_hash="0x" + "f" * 64,
+            is_cancelled=False,
+            is_settled=False,
+        )
+
+        res = brand_client.get(my_cancelled_bids_url())
+        assert res.status_code == status.HTTP_200_OK
+        data = res.json()["data"]
+        ids = {item["id"] for item in data}
+        assert ids == {cancelled_bid.id}
+        assert all(item["is_cancelled"] is True for item in data)
+        assert all(item["bid_status"] == "cancelled" for item in data)
+
+    def test_brand_history_can_filter_status_query(
+        self,
+        brand_client,
+        brand,
+        open_match,
+        approved_creative,
+    ):
+        active_bid = Bid.objects.create(
+            match=open_match,
+            brand=brand,
+            event_type=0,
+            amount=Decimal("160000"),
+            creative=approved_creative,
+            tx_hash="0x" + "7" * 64,
+            is_cancelled=False,
+            is_settled=False,
+        )
+        Bid.objects.create(
+            match=open_match,
+            brand=brand,
+            event_type=1,
+            amount=Decimal("170000"),
+            creative=approved_creative,
+            tx_hash="0x" + "8" * 64,
+            is_cancelled=True,
+            is_settled=False,
+        )
+
+        res = brand_client.get(my_bids_history_url() + "?status=active")
+        assert res.status_code == status.HTTP_200_OK
+        data = res.json()["data"]
+        assert {item["id"] for item in data} == {active_bid.id}
+
+    def test_non_brand_user_cannot_access_brand_bid_history(
+        self,
+        broadcaster_client,
+    ):
+        res = broadcaster_client.get(my_bids_history_url())
+        assert res.status_code == status.HTTP_403_FORBIDDEN
 
 
 # ── Budget cap ────────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.bidding.models import AuctionResult, Bid, Creative, Refund
-from apps.matches.models import MatchEventConfig
+from apps.matches.models import Match, MatchEventConfig
 
 
 def _event_type_label(event_type: int) -> str:
@@ -184,6 +184,69 @@ class BidDetailedSerializer(serializers.ModelSerializer):
 
     def get_event_type_label(self, obj: Bid) -> str:
         return _event_type_label(obj.event_type)
+
+
+class BrandBidHistorySerializer(serializers.ModelSerializer):
+    """Bid history entries for the logged-in brand with match metadata."""
+
+    event_type_label = serializers.SerializerMethodField()
+    match_id = serializers.IntegerField(source="match.id", read_only=True)
+    match_title = serializers.SerializerMethodField()
+    match_date = serializers.DateField(source="match.match_date", read_only=True)
+    match_time = serializers.TimeField(source="match.match_time", read_only=True)
+    match_state = serializers.IntegerField(source="match.state", read_only=True)
+    match_state_label = serializers.CharField(source="match.get_state_display")
+    creative_title = serializers.SerializerMethodField()
+    creative_ad_url = serializers.SerializerMethodField()
+    bid_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Bid
+        fields = (
+            "id",
+            "match_id",
+            "match_title",
+            "match_date",
+            "match_time",
+            "match_state",
+            "match_state_label",
+            "event_type",
+            "event_type_label",
+            "amount",
+            "creative_title",
+            "creative_ad_url",
+            "tx_hash",
+            "cancel_tx_hash",
+            "is_settled",
+            "is_cancelled",
+            "bid_status",
+            "created_at",
+        )
+
+    def get_event_type_label(self, obj: Bid) -> str:
+        return _event_type_label(obj.event_type)
+
+    def get_match_title(self, obj: Bid) -> str:
+        return f"{obj.match.team_a} vs {obj.match.team_b}"
+
+    def get_creative_title(self, obj: Bid) -> str:
+        if obj.creative:
+            return obj.creative.title
+        return ""
+
+    def get_creative_ad_url(self, obj: Bid) -> str:
+        if obj.creative:
+            return obj.creative.ad_url
+        return ""
+
+    def get_bid_status(self, obj: Bid) -> str:
+        if obj.is_cancelled:
+            return "cancelled"
+        if obj.is_settled:
+            return "settled"
+        if obj.match.state in (Match.State.OPEN, Match.State.ACTIVE):
+            return "active"
+        return "history"
 
 
 # Alias for backwards compat

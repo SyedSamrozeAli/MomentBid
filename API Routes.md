@@ -82,6 +82,7 @@ Response data:
 {
   "username": "ali_pepsi",
   "email": "ali@pepsi.com",
+  "role": "brand_owner",
   "logo": "http://localhost:8000/media/...",
   "brand_name": "Pepsi",
   "broadcaster_name": null,
@@ -95,10 +96,10 @@ Response data:
 
 After login:
 1. Store `tokens.access` and `tokens.refresh`
-2. Check `org_type`:
-   - `"brand"` → redirect to Brand Dashboard
-   - `"broadcaster"` → redirect to Broadcaster Dashboard
-   - `null` + role from `/api/auth/me/` = admin → redirect to Admin Panel
+2. Check `role`:
+  - `"brand_owner"` / `"brand_member"` → redirect to Brand Dashboard
+  - `"broadcaster_owner"` / `"broadcaster_member"` → redirect to Broadcaster Dashboard
+  - `"admin"` → redirect to Admin Panel
 
 ---
 
@@ -1307,6 +1308,9 @@ No auth header on WebSocket connection. Connect per active match page.
 | `GET /broadcasters/me/dashboard/` | — | ✅ | — | — |
 | `POST /creatives/` | ✅ | — | — | — |
 | `GET /creatives/` | ✅ | — | — | — |
+| `GET /bids/me/history/` | ✅ | — | — | — |
+| `GET /bids/me/active/` | ✅ | — | — | — |
+| `GET /bids/me/cancelled/` | ✅ | — | — | — |
 | `POST /matches/{id}/bids/` | ✅ | — | — | — |
 | `GET /matches/{id}/bids/leaderboard/` | ✅ | ✅ | ✅ | — |
 | `PATCH /matches/{id}/bids/{id}/increase/` | ✅ | — | — | — |
