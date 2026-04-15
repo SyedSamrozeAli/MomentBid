@@ -37,6 +37,10 @@ if [[ -z "${PROJECT_DIR}" ]]; then
 fi
 
 echo "[render_start] Using project dir: ${PROJECT_DIR}"
+
+echo "[render_start] Installing dependencies..."
+pip install -r "${SCRIPT_DIR}/requirements.txt"
+
 cd "${PROJECT_DIR}"
 
 echo "[render_start] Running migrations..."
