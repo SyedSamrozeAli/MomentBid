@@ -15,7 +15,16 @@ import {
 const topUpOptions = [250000, 500000, 1000000, 2000000];
 const withdrawOptions = [150000, 300000, 750000];
 
-const staticMoneyMoves = [
+type MoneyMove = {
+  type: string;
+  amount: number;
+  status: string;
+  context: string;
+  icon: typeof ArrowUpRight;
+  color: "cyan" | "indigo" | "emerald";
+};
+
+const staticMoneyMoves: MoneyMove[] = [
   {
     type: "Top Up",
     amount: 1000000,
@@ -54,15 +63,6 @@ const INITIAL_BALANCE_STATE: BalanceState = {
   escrowLocked: 0,
   withdrawable: 0,
   walletAddress: "-",
-};
-
-type MoneyMove = {
-  type: string;
-  amount: number;
-  status: string;
-  context: string;
-  icon: typeof ArrowUpRight;
-  color: "cyan" | "indigo" | "emerald";
 };
 
 function formatPKR(amount: number) {

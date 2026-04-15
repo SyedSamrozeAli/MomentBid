@@ -119,7 +119,7 @@ export default function BroadcasterEarningsPage() {
 
         const nextRecords: EarningRecord[] = perMatchResults
           .filter((result): result is PromiseFulfilledResult<CompletedMatchEarnings> => result.status === "fulfilled")
-          .map((result) => {
+          .map((result): EarningRecord => {
             const fixture = `${result.value.match.team_a} vs ${result.value.match.team_b}`;
 
             const reservationYield = 0;
