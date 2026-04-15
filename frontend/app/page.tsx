@@ -20,7 +20,19 @@ export default function Home() {
       return;
     }
 
-    setError("Invalid credentials. Use username kababjees and password 123.");
+    if (username === "walee" && password === "123") {
+      setDemoAuthSession(username);
+      router.replace("/broadcaster");
+      return;
+    }
+
+    if (username === "admin" && password === "123") {
+      setDemoAuthSession(username);
+      router.replace("/admin");
+      return;
+    }
+
+    setError("Invalid credentials. Use kababjees, walee, or admin with password 123.");
   };
 
   // Generate an abstract field of floating energy platforms

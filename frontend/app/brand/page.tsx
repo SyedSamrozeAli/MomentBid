@@ -105,10 +105,10 @@ export default function BrandDashboardPage() {
               <p className="text-[10px] text-[#4E8098]/80 mt-1 uppercase tracking-widest">Real-time rank estimation</p>
             </div>
             <Link
-              href="/brand/opportunities"
+              href="/brand/matches"
               className="group flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#90C2E7] transition-colors hover:text-[#4E8098]"
             >
-              Configure
+              Browse
               <ArrowRight className="w-3 h-3 transition-transform group-hover:translate-x-1" />
             </Link>
           </div>
@@ -189,7 +189,7 @@ export default function BrandDashboardPage() {
 
           <div className="grid gap-3 flex-1">
             <Link
-              href="/brand/live"
+              href="/brand/matches/m1"
               className="group flex flex-col bg-[#A31621] p-5 transition-all hover:bg-[#8a121c] justify-between items-start h-24"
             >
               <Radio className="w-5 h-5 text-white/80" />

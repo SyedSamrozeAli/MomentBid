@@ -1,15 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { ShieldCheck, Target, Radio, Clock, ChevronRight, ArrowLeft } from "lucide-react";
+import { Search, Filter, Calendar, Target, Activity, ShieldCheck, ArrowRight } from "lucide-react";
+import Link from "next/link";
 
 type Match = {
   id: string;
   homeTeam: string;
   awayTeam: string;
-  status: "ONGOING" | "UPCOMING_OPEN" | "UPCOMING_CLOSED";
-  timeText: string;
-  daysUntil?: number;
+  status: "OPEN" | "ACTIVE" | "COMPLETED" | "CREATED" | "CANCELLED";
+  date: string;
+  venue: string;
+  broadcaster: string;
+  biddable: boolean;
 };
 
 const mockMatches: Match[] = [
@@ -17,263 +20,164 @@ const mockMatches: Match[] = [
     id: "m1",
     homeTeam: "Karachi Kings",
     awayTeam: "Lahore Qalandars",
-    status: "ONGOING",
-    timeText: "LIVE (2nd Innings, Over 14)",
+    status: "ACTIVE",
+    date: "Apr 14, 2026",
+    venue: "National Stadium, Karachi",
+    broadcaster: "PTV Sports",
+    biddable: false,
   },
   {
     id: "m2",
     homeTeam: "Islamabad United",
     awayTeam: "Multan Sultans",
-    status: "UPCOMING_OPEN",
-    timeText: "Starts in 3 days",
-    daysUntil: 3,
+    status: "OPEN",
+    date: "Apr 16, 2026",
+    venue: "Rawalpindi Cricket Stadium",
+    broadcaster: "TEN Sports",
+    biddable: true,
   },
   {
     id: "m3",
     homeTeam: "Peshawar Zalmi",
     awayTeam: "Quetta Gladiators",
-    status: "UPCOMING_CLOSED",
-    timeText: "Starts in 10 days",
-    daysUntil: 10,
+    status: "OPEN",
+    date: "Apr 18, 2026",
+    venue: "Gaddafi Stadium, Lahore",
+    broadcaster: "A Sports",
+    biddable: true,
+  },
+  {
+    id: "m4",
+    homeTeam: "Karachi Kings",
+    awayTeam: "Multan Sultans",
+    status: "COMPLETED",
+    date: "Apr 10, 2026",
+    venue: "National Stadium, Karachi",
+    broadcaster: "PTV Sports",
+    biddable: false,
   },
 ];
 
-type BidCategory = {
-  id: string;
-  name: string;
-  reservePrice: number;
-  currentHighBid: number;
-  yourBid: number;
-};
+export default function BrowseMatchesPage() {
+  const [filter, setFilter] = useState<"ALL" | "OPEN" | "ACTIVE">("ALL");
+  const [search, setSearch] = useState("");
 
-const initialCategories: BidCategory[] = [
-  { id: "cat1", name: "Hattrick Ball", reservePrice: 500000, currentHighBid: 600000, yourBid: 0 },
-  { id: "cat2", name: "Super Over", reservePrice: 1500000, currentHighBid: 1500000, yourBid: 0 },
-  { id: "cat3", name: "Final Over (Innings 2)", reservePrice: 800000, currentHighBid: 950000, yourBid: 0 },
-];
-
-const BID_INCREMENT = 50000;
-
-export default function MatchesBiddingPage() {
-  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
-  const [biddingState, setBiddingState] = useState({
-    categories: initialCategories,
-    walletBalance: 2550000,
+  const filteredMatches = mockMatches.filter(m => {
+    if (filter !== "ALL" && m.status !== filter) return false;
+    const lowerSearch = search.toLowerCase();
+    if (search && !m.homeTeam.toLowerCase().includes(lowerSearch) && !m.awayTeam.toLowerCase().includes(lowerSearch)) return false;
+    return true;
   });
-
-  const { categories, walletBalance } = biddingState;
-
-  const handleMatchClick = (match: Match) => {
-    setSelectedMatch(match);
-  };
-
-  const handleBack = () => {
-    setSelectedMatch(null);
-  };
-
-  const handlePlaceBid = (categoryId: string, bidAmount: number) => {
-    setBiddingState((prevState) => {
-      const targetCategory = prevState.categories.find((category) => category.id === categoryId);
-
-      if (!targetCategory) {
-        return prevState;
-      }
-
-      const minimumAllowedBid = Math.max(targetCategory.reservePrice, targetCategory.currentHighBid + BID_INCREMENT);
-      if (bidAmount < minimumAllowedBid) {
-        return prevState;
-      }
-
-      const additionalCommitment = bidAmount - targetCategory.yourBid;
-      if (additionalCommitment <= 0) {
-        return prevState;
-      }
-
-      if (prevState.walletBalance < additionalCommitment) {
-        console.warn("Insufficient funds to place this bid.");
-        return prevState;
-      }
-
-      return {
-        walletBalance: prevState.walletBalance - additionalCommitment,
-        categories: prevState.categories.map((category) => {
-          if (category.id !== categoryId) {
-            return category;
-          }
-
-          return {
-            ...category,
-            yourBid: bidAmount,
-            currentHighBid: Math.max(category.currentHighBid, bidAmount),
-          };
-        }),
-      };
-    });
-  };
-
-  if (selectedMatch) {
-    return (
-      <div className="flex flex-col space-y-8 pb-10">
-        <header className="flex flex-col gap-4 border-b border-[#CED3DC] pb-5">
-          <button 
-            onClick={handleBack}
-            className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-[#4E8098] hover:text-[#A31621] transition-colors self-start pb-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Matches
-          </button>
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <Target className="w-4 h-4 text-[#A31621]" />
-              <p className="text-[10px] uppercase tracking-widest font-semibold text-[#A31621]/80">
-                Match Bidding Interface
-              </p>
-            </div>
-            <h2 className="text-2xl font-semibold tracking-tight text-[#1a1a1a]">
-              {selectedMatch.homeTeam} vs {selectedMatch.awayTeam}
-            </h2>
-            <p className="mt-1 text-sm text-[#4E8098] max-w-xl">
-              {selectedMatch.timeText}
-            </p>
-          </div>
-        </header>
-
-        {selectedMatch.status === "UPCOMING_CLOSED" ? (
-          <div className="bg-white border border-[#CED3DC] p-8 text-center flex flex-col items-center">
-            <Clock className="w-8 h-8 text-[#4E8098] mb-4" />
-            <h3 className="text-lg font-semibold text-[#1a1a1a] mb-2">Bidding is completely closed</h3>
-            <p className="text-sm text-[#4E8098] max-w-md">
-              This match is starting in more than 1 week ({selectedMatch.daysUntil} days). Bidding channels have not yet opened. 
-              Please check back closer to the fixture date.
-            </p>
-          </div>
-        ) : selectedMatch.status === "UPCOMING_OPEN" ? (
-          <div className="grid gap-8 lg:grid-cols-[1fr_300px]">
-            <div className="space-y-6">
-              <h3 className="text-lg font-semibold text-[#1a1a1a]">Available Bid Categories</h3>
-              {categories.map(cat => (
-                <div key={cat.id} className="bg-white border border-[#CED3DC] p-5 flex flex-col sm:flex-row gap-5 items-start sm:items-center justify-between">
-                  <div>
-                    <h4 className="font-semibold text-[#1a1a1a]">{cat.name}</h4>
-                    <p className="text-xs text-[#4E8098] mt-1">Reserve: {"Rs " + cat.reservePrice.toLocaleString()}</p>
-                    <p className="text-xs font-medium text-[#A31621] mt-1">Current High: {"Rs " + cat.currentHighBid.toLocaleString()}</p>
-                    {cat.yourBid > 0 && (
-                      <p className="text-xs font-semibold text-green-600 mt-2">Your locked bid: Rs {cat.yourBid.toLocaleString()}</p>
-                    )}
-                  </div>
-                  <div className="flex gap-2 w-full sm:w-auto mt-4 sm:mt-0">
-                    <button
-                      onClick={() => handlePlaceBid(cat.id, cat.currentHighBid > 0 ? cat.currentHighBid + BID_INCREMENT : cat.reservePrice)}
-                      className="px-4 py-2 bg-[#1a1a1a] text-white text-xs font-semibold uppercase tracking-wider hover:bg-[#A31621] transition-colors w-full sm:w-auto"
-                    >
-                      Bid Rs {(cat.currentHighBid > 0 ? cat.currentHighBid + BID_INCREMENT : cat.reservePrice).toLocaleString()}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            
-            {/* Wallet sidebar in bid page */}
-            <div>
-              <div className="bg-[#FCF7F8] border border-[#CED3DC] p-5 sticky top-24">
-                <div className="flex items-center gap-2 mb-4">
-                  <ShieldCheck className="w-4 h-4 text-[#A31621]" />
-                  <span className="text-xs font-semibold uppercase tracking-widest text-[#1a1a1a]">Liquidity</span>
-                </div>
-                <div className="text-3xl font-light text-[#1a1a1a]">
-                  Rs {walletBalance.toLocaleString()}
-                </div>
-                <p className="text-xs text-[#4E8098] mt-2">Available to commit</p>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-white border border-[#CED3DC] p-8 text-center flex flex-col items-center">
-            <Radio className="w-8 h-8 text-[#A31621] mb-4 animate-pulse" />
-            <h3 className="text-lg font-semibold text-[#1a1a1a] mb-2">Live Bidding is on the Live Dashboard</h3>
-            <p className="text-sm text-[#4E8098] max-w-md">
-              This match is currently ongoing. Please navigate to the Live Match dashboard for real-time trigger bidding.
-            </p>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // --- List View ---
-  const ongoing = mockMatches.filter(m => m.status === "ONGOING");
-  const upcoming = mockMatches.filter(m => m.status.startsWith("UPCOMING"));
 
   return (
     <div className="flex flex-col space-y-10 pb-10">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end justify-between border-b border-[#CED3DC] pb-5">
+      {/* Header */}
+      <header className="flex flex-col gap-6 md:flex-row md:items-end justify-between border-b border-[#CED3DC] pb-6 bg-white p-6 md:p-8">
         <div>
           <div className="flex items-center gap-2 mb-2">
-            <Target className="w-4 h-4 text-[#A31621]" />
-            <p className="text-[10px] uppercase tracking-widest font-semibold text-[#A31621]/80">Fixture Explorer</p>
+            <Target className="w-4 h-4 text-[#4E8098]" />
+            <p className="text-[10px] uppercase tracking-widest font-semibold text-[#4E8098]">Marketplace</p>
           </div>
-          <h2 className="text-2xl font-semibold tracking-tight text-[#1a1a1a]">Matches & Bidding</h2>
-          <p className="mt-1 text-sm text-[#4E8098] max-w-xl">
-            Browse upcoming fixtures, assess eligibility, and open bidding positions for targeted events.
+          <h2 className="text-3xl font-medium tracking-tight text-[#1a1a1a]">Browse Matches</h2>
+          <p className="mt-2 text-sm text-[#4E8098] max-w-xl leading-relaxed">
+            Discover upcoming fixtures, review reserve floors, and configure your bidding strategy before the slots close.
           </p>
+        </div>
+        
+        {/* Filters & Search */}
+        <div className="flex flex-col sm:flex-row items-center gap-4 bg-[#FCF7F8] border border-[#CED3DC] p-3">
+          <div className="relative w-full sm:w-64">
+            <Search className="w-4 h-4 text-[#4E8098] absolute left-3 top-1/2 -translate-y-1/2" />
+            <input 
+              type="text" 
+              placeholder="Search teams..." 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-white border border-[#CED3DC] pl-9 pr-3 py-2 text-xs font-mono text-[#1a1a1a] focus:outline-none focus:border-[#90C2E7]"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            {(["ALL", "OPEN", "ACTIVE"] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                  filter === f 
+                    ? "bg-[#1a1a1a] text-white" 
+                    : "bg-white border border-[#CED3DC] text-[#4E8098] hover:bg-[#CED3DC]/30 hover:text-[#1a1a1a]"
+                }`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
-      {/* Ongoing Matches */}
-      <section>
-        <h3 className="text-sm font-semibold uppercase tracking-widest text-[#1a1a1a] mb-4 flex items-center gap-2">
-          <Radio className="w-4 h-4 text-[#A31621] animate-pulse" />
-          Ongoing Matches
-        </h3>
-        <div className="grid gap-4 md:grid-cols-2">
-          {ongoing.map(match => (
-            <div 
-              key={match.id} 
-              onClick={() => handleMatchClick(match)}
-              className="bg-white border-2 border-[#A31621]/50 p-5 cursor-pointer hover:border-[#A31621] transition-colors group"
-            >
-              <div className="flex justify-between items-start mb-4">
-                <span className="text-[10px] font-bold tracking-widest text-white bg-[#A31621] px-2 py-1 uppercase">Live Now</span>
-                <ChevronRight className="w-4 h-4 text-[#4E8098] group-hover:text-[#A31621] group-hover:translate-x-1 transition-transform" />
-              </div>
-              <h4 className="text-lg font-semibold text-[#1a1a1a]">
-                {match.homeTeam} vs {match.awayTeam}
-              </h4>
-              <p className="text-sm text-[#A31621] font-medium mt-1">{match.timeText}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Upcoming Matches */}
-      <section>
-        <h3 className="text-sm font-semibold uppercase tracking-widest text-[#1a1a1a] mb-4 flex items-center gap-2">
-          <Clock className="w-4 h-4 text-[#4E8098]" />
-          Upcoming Matches
-        </h3>
-        <div className="grid gap-4 md:grid-cols-2">
-          {upcoming.map(match => {
-            const isOpen = match.status === "UPCOMING_OPEN";
-            return (
-              <div 
-                key={match.id} 
-                onClick={() => handleMatchClick(match)}
-                className={`bg-white border p-5 cursor-pointer transition-colors group ${isOpen ? "border-[#4E8098] hover:border-[#1a1a1a]" : "border-[#CED3DC] opacity-80"}`}
-              >
-                <div className="flex justify-between items-start mb-4">
-                  <span className={`text-[10px] font-bold tracking-widest px-2 py-1 uppercase ${isOpen ? "bg-[#90C2E7]/20 text-[#4E8098]" : "bg-[#FCF7F8] text-[#4E8098]/60"}`}>
-                    {isOpen ? "Bidding Open" : "Bidding Closed"}
-                  </span>
-                  <ChevronRight className="w-4 h-4 text-[#4E8098]/40 group-hover:text-[#4E8098] group-hover:translate-x-1 transition-transform" />
+      {/* Grid */}
+      <section className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3 px-0 sm:px-6">
+        {filteredMatches.length === 0 ? (
+          <div className="col-span-full border border-[#CED3DC] bg-[#FCF7F8] p-12 flex flex-col justify-center items-center text-center">
+            <Filter className="w-8 h-8 text-[#CED3DC] mb-4" />
+            <p className="text-sm font-semibold tracking-wide text-[#1a1a1a] uppercase">No fixtures found</p>
+            <p className="mt-1 text-[10px] text-[#4E8098]/80 uppercase tracking-widest">Adjust your filters to see more matches</p>
+          </div>
+        ) : (
+          filteredMatches.map(match => (
+            <article key={match.id} className="group border border-[#CED3DC] bg-white flex flex-col hover:border-[#90C2E7] transition-all">
+              <div className={`p-5 border-b border-[#CED3DC] flex items-start justify-between ${
+                match.status === "ACTIVE" ? "bg-[#FCF7F8]" : "bg-white"
+              }`}>
+                <div className="space-y-1 w-full">
+                  <div className="flex justify-between items-center w-full mb-3">
+                    <span className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                      match.status === "OPEN" ? "bg-[#90C2E7]/20 text-[#1a1a1a] border border-[#90C2E7]/50" :
+                      match.status === "ACTIVE" ? "bg-[#A31621] text-white" :
+                      "bg-[#FCF7F8] text-[#4E8098] border border-[#CED3DC]"
+                    }`}>
+                      {match.status}
+                    </span>
+                    <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-mono text-[#4E8098]/80">
+                      <Calendar className="w-3 h-3" />
+                      {match.date}
+                    </span>
+                  </div>
+                  <h3 className="text-base font-semibold tracking-tight text-[#1a1a1a] leading-snug">
+                    {match.homeTeam} <span className="text-[#4E8098] font-normal text-sm mx-1">vs</span> {match.awayTeam}
+                  </h3>
+                  <p className="text-xs text-[#4E8098] line-clamp-1">{match.venue}</p>
                 </div>
-                <h4 className="text-lg font-semibold text-[#1a1a1a]">
-                  {match.homeTeam} vs {match.awayTeam}
-                </h4>
-                <p className="text-sm text-[#4E8098] mt-1">{match.timeText}</p>
               </div>
-            );
-          })}
-        </div>
+
+              <div className="p-5 flex-1 space-y-4">
+                <div className="flex items-center justify-between text-xs text-[#1a1a1a]">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-[#4E8098]">Host Broadcast</span>
+                  <span className="font-semibold">{match.broadcaster}</span>
+                </div>
+                <div className="bg-[#FCF7F8] p-3 border border-[#CED3DC] flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-[#4E8098] flex items-center gap-2">
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#90C2E7]" /> Verified
+                  </span>
+                  <span className="text-[10px] uppercase font-mono text-[#4E8098]/80 text-right">No Fraud</span>
+                </div>
+              </div>
+
+              <div className="p-5 pt-0 mt-auto">
+                <Link
+                  href={`/brand/matches/${match.id}`}
+                  className={`w-full flex items-center justify-center gap-2 px-4 py-3 text-xs font-bold uppercase tracking-widest transition-colors ${
+                    match.biddable 
+                      ? "bg-[#1a1a1a] text-white hover:bg-[#333]" 
+                      : "bg-[#FCF7F8] text-[#4E8098] border border-[#CED3DC] hover:text-[#1a1a1a]"
+                  }`}
+                >
+                  {match.biddable ? "Place Bid" : "View Details"}
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            </article>
+          ))
+        )}
       </section>
     </div>
   );
