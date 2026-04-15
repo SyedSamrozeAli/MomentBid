@@ -21,6 +21,7 @@ import {
 } from "@/lib/brandApi";
 
 const WS_BASE_URL = (process.env.NEXT_PUBLIC_WS_BASE_URL ?? "ws://localhost:8000").replace(/\/+$/, "");
+const LEADERBOARD_POLL_INTERVAL_MS = 2500;
 
 type MatchTab = "bidding" | "live";
 
@@ -53,6 +54,24 @@ function formatPKR(value: number): string {
   }).format(value);
 }
 
+function normalizeIdentityLabel(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+function logBrandLive(
+  level: "info" | "warn" | "error" | "debug",
+  matchId: number,
+  message: string,
+  details?: unknown,
+): void {
+  const prefix = `[BrandLive][match:${Number.isFinite(matchId) ? matchId : "invalid"}] ${message}`;
+  if (details === undefined) {
+    console[level](prefix);
+    return;
+  }
+  console[level](prefix, details);
+}
+
 export default function MatchDetailPage() {
   const params = useParams<{ id: string }>();
   const matchId = Number.parseInt(String(params.id ?? ""), 10);
@@ -76,12 +95,15 @@ export default function MatchDetailPage() {
   const myBidByEventType = useMemo(() => {
     const output = new Map<number, MyBidMeta>();
 
-    if (!brandName) {
+    const normalizedBrandName = normalizeIdentityLabel(brandName);
+    if (!normalizedBrandName) {
       return output;
     }
 
     for (const group of leaderboard) {
-      const bidIndex = group.bids.findIndex((bid) => bid.brand === brandName);
+      const bidIndex = group.bids.findIndex(
+        (bid) => !bid.is_cancelled && normalizeIdentityLabel(bid.brand) === normalizedBrandName,
+      );
       if (bidIndex === -1) {
         continue;
       }
@@ -142,31 +164,66 @@ export default function MatchDetailPage() {
     [approvedCreatives],
   );
 
-  const refreshLeaderboard = useCallback(async () => {
+  const refreshLeaderboard = useCallback(async (source = "manual") => {
     if (!Number.isFinite(matchId)) {
       return;
     }
 
-    const nextLeaderboard = await getMatchLeaderboard(matchId);
-    setLeaderboard(nextLeaderboard);
+    logBrandLive("debug", matchId, "refreshLeaderboard:start", { source });
+
+    try {
+      const nextLeaderboard = await getMatchLeaderboard(matchId);
+      setLeaderboard(nextLeaderboard);
+      logBrandLive("debug", matchId, "refreshLeaderboard:success", {
+        source,
+        eventGroups: nextLeaderboard.length,
+        topEventType: nextLeaderboard[0]?.event_type ?? null,
+      });
+    } catch (error) {
+      logBrandLive("error", matchId, "refreshLeaderboard:failed", { source, error });
+      throw error;
+    }
   }, [matchId]);
 
-  const refreshMatchDetail = useCallback(async () => {
+  const refreshMatchDetail = useCallback(async (source = "manual") => {
     if (!Number.isFinite(matchId)) {
       return;
     }
 
-    const detail = await getMatchDetail(matchId);
-    setMatchDetail(detail);
+    logBrandLive("debug", matchId, "refreshMatchDetail:start", { source });
+
+    try {
+      const detail = await getMatchDetail(matchId);
+      setMatchDetail(detail);
+      logBrandLive("debug", matchId, "refreshMatchDetail:success", {
+        source,
+        state: detail.state,
+        stateLabel: detail.state_label,
+      });
+    } catch (error) {
+      logBrandLive("error", matchId, "refreshMatchDetail:failed", { source, error });
+      throw error;
+    }
   }, [matchId]);
 
-  const refreshAuctionResults = useCallback(async () => {
+  const refreshAuctionResults = useCallback(async (source = "manual") => {
     if (!Number.isFinite(matchId)) {
       return;
     }
 
-    const results = await getAuctionResults(matchId);
-    setAuctionResults(results);
+    logBrandLive("debug", matchId, "refreshAuctionResults:start", { source });
+
+    try {
+      const results = await getAuctionResults(matchId);
+      setAuctionResults(results);
+      logBrandLive("debug", matchId, "refreshAuctionResults:success", {
+        source,
+        groups: results.length,
+      });
+    } catch (error) {
+      logBrandLive("error", matchId, "refreshAuctionResults:failed", { source, error });
+      throw error;
+    }
   }, [matchId]);
 
   const loadMatchPage = useCallback(async () => {
@@ -178,6 +235,7 @@ export default function MatchDetailPage() {
 
     setIsLoading(true);
     setPageError("");
+    logBrandLive("info", matchId, "loadMatchPage:start");
 
     try {
       const [detail, board, results, allCreatives, userContext] = await Promise.all([
@@ -192,7 +250,13 @@ export default function MatchDetailPage() {
       setLeaderboard(board);
       setAuctionResults(results);
       setApprovedCreatives(allCreatives);
-      setBrandName(userContext.org?.name ?? "");
+      setBrandName(userContext.org?.name ?? userContext.user.username ?? "");
+      logBrandLive("info", matchId, "loadMatchPage:success", {
+        leaderboardEvents: board.length,
+        auctionResults: results.length,
+        approvedCreatives: allCreatives.length,
+        brand: userContext.org?.name ?? userContext.user.username ?? "",
+      });
 
       const defaultCreativeId = allCreatives[0]?.id ? String(allCreatives[0].id) : "";
       const nextForms: Record<number, EventFormState> = {};
@@ -205,6 +269,7 @@ export default function MatchDetailPage() {
       }
       setEventForms(nextForms);
     } catch (error) {
+      logBrandLive("error", matchId, "loadMatchPage:failed", { error });
       const message =
         error instanceof BrandApiError
           ? error.message
@@ -226,35 +291,127 @@ export default function MatchDetailPage() {
 
     const socket = new WebSocket(`${WS_BASE_URL}/ws/matches/${matchId}/`);
 
+    socket.onopen = () => {
+      logBrandLive("info", matchId, "websocket:open", { url: `${WS_BASE_URL}/ws/matches/${matchId}/` });
+    };
+
+    socket.onerror = (event) => {
+      logBrandLive("warn", matchId, "websocket:error", event);
+    };
+
     socket.onmessage = (event) => {
       try {
-        const parsed = JSON.parse(event.data) as { event?: string };
-        if (!parsed.event) {
+        const parsed = JSON.parse(event.data) as {
+          event?: string;
+          type?: string;
+          payload?: {
+            event_type?: number;
+            state?: number;
+            trigger_number?: number;
+          };
+          data?: {
+            event?: string;
+            payload?: {
+              event_type?: number;
+              state?: number;
+              trigger_number?: number;
+            };
+          };
+        };
+
+        const eventName =
+          parsed.event ??
+          parsed.type ??
+          parsed.data?.event ??
+          "";
+
+        const payload = parsed.payload ?? parsed.data?.payload;
+        const hasEventHint =
+          typeof payload?.event_type === "number" ||
+          typeof payload?.trigger_number === "number" ||
+          typeof payload?.state === "number";
+
+        if (!eventName && !hasEventHint) {
+          logBrandLive("debug", matchId, "websocket:message-ignored", { raw: parsed });
           return;
         }
 
-        if (parsed.event === "bid_placed" || parsed.event === "bid_increased") {
-          void refreshLeaderboard();
-          return;
+        logBrandLive("debug", matchId, "websocket:message", {
+          eventName,
+          payload,
+        });
+
+        const shouldRefreshResults =
+          eventName === "auction_settled" ||
+          typeof payload?.trigger_number === "number";
+
+        const shouldRefreshMatch =
+          eventName === "match_state_changed" ||
+          typeof payload?.state === "number" ||
+          eventName === "refund_processed";
+
+        const refreshTasks: Array<Promise<void>> = [
+          refreshLeaderboard("ws-message").catch((error) => {
+            logBrandLive("warn", matchId, "websocket:leaderboard-refresh-failed", { error, eventName });
+          }),
+        ];
+
+        if (shouldRefreshResults) {
+          refreshTasks.push(
+            refreshAuctionResults("ws-auction").catch((error) => {
+              logBrandLive("warn", matchId, "websocket:auction-results-refresh-failed", { error, eventName });
+            }),
+          );
         }
 
-        if (parsed.event === "auction_settled") {
-          void Promise.all([refreshAuctionResults(), refreshLeaderboard()]);
-          return;
+        if (shouldRefreshMatch || refreshTasks.length === 0) {
+          refreshTasks.push(
+            refreshMatchDetail("ws-state").catch((error) => {
+              logBrandLive("warn", matchId, "websocket:match-refresh-failed", { error, eventName });
+            }),
+          );
         }
 
-        if (parsed.event === "match_state_changed") {
-          void refreshMatchDetail();
-        }
+        void Promise.all(refreshTasks);
       } catch {
         // Ignore malformed websocket messages and keep the socket open.
       }
     };
 
     return () => {
+      logBrandLive("info", matchId, "websocket:close");
       socket.close();
     };
   }, [matchId, refreshAuctionResults, refreshLeaderboard, refreshMatchDetail]);
+
+  useEffect(() => {
+    if (!Number.isFinite(matchId)) {
+      return;
+    }
+
+    const isPollEligible = matchDetail?.state === 1 || matchDetail?.state === 2;
+    if (!isPollEligible) {
+      return;
+    }
+
+    logBrandLive("info", matchId, "poller:start", {
+      intervalMs: LEADERBOARD_POLL_INTERVAL_MS,
+      state: matchDetail?.state,
+      stateLabel: matchDetail?.state_label,
+    });
+
+    const timerId = window.setInterval(() => {
+      logBrandLive("debug", matchId, "poller:tick");
+      void refreshLeaderboard("poll").catch((error) => {
+        logBrandLive("warn", matchId, "poller:leaderboard-refresh-failed", { error });
+      });
+    }, LEADERBOARD_POLL_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(timerId);
+      logBrandLive("info", matchId, "poller:stop");
+    };
+  }, [matchDetail?.state, matchDetail?.state_label, matchId, refreshLeaderboard]);
 
   const handleBidAction = useCallback(
     async (eventType: number): Promise<void> => {
@@ -277,6 +434,14 @@ export default function MatchDetailPage() {
       setPageError("");
 
       try {
+        logBrandLive("info", matchId, "bidAction:start", {
+          eventType,
+          action: myBid ? "increase_bid" : "place_bid",
+          additionalAmount: form.additionalAmount,
+          bidAmount: form.bidAmount,
+          myBidId: myBid?.id ?? null,
+        });
+
         if (myBid) {
           if (!form.additionalAmount.trim()) {
             throw new BrandApiError("Additional amount is required.", 400);
@@ -302,8 +467,17 @@ export default function MatchDetailPage() {
           updateEventForm(eventType, { bidAmount: "" });
         }
 
-        await Promise.all([refreshLeaderboard(), refreshMatchDetail()]);
+        await Promise.all([
+          refreshLeaderboard("bid-action-success"),
+          refreshMatchDetail("bid-action-success"),
+        ]);
+
+        logBrandLive("info", matchId, "bidAction:success", {
+          eventType,
+          action: myBid ? "increase_bid" : "place_bid",
+        });
       } catch (error) {
+        logBrandLive("error", matchId, "bidAction:failed", { eventType, error });
         const message =
           error instanceof BrandApiError
             ? error.message
@@ -554,35 +728,129 @@ export default function MatchDetailPage() {
                   <Activity className="w-4 h-4 text-[#A31621]" />
                 </div>
 
-                {sortedAuctionResults.length === 0 ? (
-                  <div className="bg-white border border-[#CED3DC] p-5 text-sm text-[#4E8098]">
-                    No auction settlements yet.
+                <div className="bg-white border border-[#CED3DC] overflow-hidden">
+                  <div className="bg-[#FCF7F8] border-b border-[#CED3DC] p-4 flex items-center justify-between">
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-[#1a1a1a]">Live Leaderboard</h3>
+                    <span className="text-[10px] font-mono tracking-widest text-[#4E8098]">
+                      {leaderboard.length} EVENTS
+                    </span>
                   </div>
-                ) : (
-                  sortedAuctionResults.map((result) => (
-                    <div key={`${result.event_type}-${result.trigger_number}`} className="bg-white border border-[#CED3DC] p-5">
-                      <div className="flex justify-between items-start mb-3">
-                        <span className="text-xs font-bold uppercase tracking-widest text-[#1a1a1a]">
-                          {result.event_type_label}
-                        </span>
-                        <span className="px-2 py-0.5 text-[10px] font-bold uppercase bg-[#FCF7F8] border border-[#CED3DC] text-[#4E8098]">
-                          Trigger #{result.trigger_number}
-                        </span>
-                      </div>
 
-                      <div className="space-y-2 mt-4 ml-6 pl-4 border-l-2 border-[#CED3DC]">
-                        {result.slots.map((slot) => (
-                          <div key={slot.id} className="flex font-mono text-xs text-[#1a1a1a]">
-                            <span className="text-[#4E8098] w-14 shrink-0">Slot {slot.slot_position}</span>
-                            <span className={slot.winner === brandName ? "font-bold text-[#A31621]" : ""}>
-                              {slot.winner} - {formatPKR(parseAmount(slot.amount))}
+                  {leaderboard.length === 0 ? (
+                    <div className="p-5 text-sm text-[#4E8098]">No active bids yet.</div>
+                  ) : (
+                    <div className="p-4 space-y-4">
+                      {leaderboard.map((group) => (
+                        <div key={group.event_type} className="border border-[#CED3DC] overflow-hidden">
+                          <div className="bg-white border-b border-[#CED3DC] p-4 flex items-center justify-between">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#1a1a1a]">
+                              {group.event_type_label}
+                            </h4>
+                            <span className="text-[10px] font-mono tracking-widest text-[#4E8098]">
+                              TOTAL {formatPKR(group.total_escrowed)}
                             </span>
                           </div>
-                        ))}
-                      </div>
+
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[520px] text-left text-xs">
+                              <thead className="bg-[#FCF7F8]">
+                                <tr className="text-[10px] uppercase tracking-widest text-[#4E8098] border-b border-[#CED3DC]">
+                                  <th className="px-4 py-3 font-semibold">Rank</th>
+                                  <th className="px-4 py-3 font-semibold">Brand</th>
+                                  <th className="px-4 py-3 font-semibold">Amount</th>
+                                  <th className="px-4 py-3 font-semibold">Status</th>
+                                  <th className="px-4 py-3 font-semibold">Placed</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-[#CED3DC]/50">
+                                {group.bids.map((bid, index) => {
+                                  const isMyBid =
+                                    normalizeIdentityLabel(bid.brand) ===
+                                    normalizeIdentityLabel(brandName);
+                                  return (
+                                    <tr key={bid.id} className={isMyBid ? "bg-[#FCF7F8]" : "hover:bg-[#FCF7F8]"}>
+                                      <td className="px-4 py-3 font-mono text-[#4E8098]">#{index + 1}</td>
+                                      <td className="px-4 py-3 text-[#1a1a1a] font-semibold">
+                                        {bid.brand}
+                                        {isMyBid ? (
+                                          <span className="ml-2 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest bg-[#A31621]/10 text-[#A31621] border border-[#A31621]/20">
+                                            You
+                                          </span>
+                                        ) : null}
+                                      </td>
+                                      <td className="px-4 py-3 font-mono text-[#A31621] font-semibold">
+                                        {formatPKR(parseAmount(bid.amount))}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <span
+                                          className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${
+                                            bid.is_cancelled
+                                              ? "bg-[#FCF7F8] border-[#CED3DC] text-[#4E8098]"
+                                              : bid.is_settled
+                                                ? "bg-[#FCF7F8] border-[#CED3DC] text-[#4E8098]"
+                                                : "bg-[#90C2E7]/20 border-[#90C2E7]/50 text-[#1a1a1a]"
+                                          }`}
+                                        >
+                                          {bid.is_cancelled ? "Cancelled" : bid.is_settled ? "Settled" : "Active"}
+                                        </span>
+                                      </td>
+                                      <td className="px-4 py-3 font-mono text-[#4E8098]">{bid.created_at}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))
-                )}
+                  )}
+                </div>
+
+                <div className="bg-white border border-[#CED3DC] overflow-hidden">
+                  <div className="bg-[#FCF7F8] border-b border-[#CED3DC] p-4 flex items-center justify-between">
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-[#1a1a1a]">Auction Settlements</h3>
+                    <span className="text-[10px] font-mono tracking-widest text-[#4E8098]">
+                      {sortedAuctionResults.length} TOTAL
+                    </span>
+                  </div>
+
+                  {sortedAuctionResults.length === 0 ? (
+                    <div className="p-5 text-sm text-[#4E8098]">No auction settlements yet.</div>
+                  ) : (
+                    <div className="p-5 space-y-4">
+                      {sortedAuctionResults.map((result) => (
+                        <div key={`${result.event_type}-${result.trigger_number}`} className="border border-[#CED3DC] p-5">
+                          <div className="flex justify-between items-start mb-3">
+                            <span className="text-xs font-bold uppercase tracking-widest text-[#1a1a1a]">
+                              {result.event_type_label}
+                            </span>
+                            <span className="px-2 py-0.5 text-[10px] font-bold uppercase bg-[#FCF7F8] border border-[#CED3DC] text-[#4E8098]">
+                              Trigger #{result.trigger_number}
+                            </span>
+                          </div>
+
+                          <div className="space-y-2 mt-4 ml-6 pl-4 border-l-2 border-[#CED3DC]">
+                            {result.slots.map((slot) => (
+                              <div key={slot.id} className="flex font-mono text-xs text-[#1a1a1a]">
+                                <span className="text-[#4E8098] w-14 shrink-0">Slot {slot.slot_position}</span>
+                                <span
+                                  className={
+                                    normalizeIdentityLabel(slot.winner) === normalizeIdentityLabel(brandName)
+                                      ? "font-bold text-[#A31621]"
+                                      : ""
+                                  }
+                                >
+                                  {slot.winner} - {formatPKR(parseAmount(slot.amount))}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

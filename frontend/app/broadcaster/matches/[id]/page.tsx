@@ -19,6 +19,7 @@ import {
 } from "@/lib/broadcasterApi";
 
 const WS_BASE_URL = (process.env.NEXT_PUBLIC_WS_BASE_URL ?? "ws://localhost:8000").replace(/\/+$/, "");
+const LEADERBOARD_POLL_INTERVAL_MS = 2500;
 
 type MatchStatus = "CREATED" | "OPEN" | "ACTIVE" | "COMPLETED" | "CANCELLED";
 
@@ -275,32 +276,67 @@ export default function BroadcasterMatchDetailPage() {
     });
   }, [auctionResults]);
 
-  const refreshLeaderboard = useCallback(async (): Promise<void> => {
+  const refreshLeaderboard = useCallback(async (source = "manual"): Promise<void> => {
     if (!Number.isFinite(matchId)) {
       return;
     }
 
-    const nextLeaderboard = await getMatchBidLeaderboard(matchId);
-    setLeaderboard(nextLeaderboard);
+    logBroadcasterLive("debug", matchId, "refreshLeaderboard:start", { source });
+
+    try {
+      const nextLeaderboard = await getMatchBidLeaderboard(matchId);
+      setLeaderboard(nextLeaderboard);
+      logBroadcasterLive("debug", matchId, "refreshLeaderboard:success", {
+        source,
+        eventGroups: nextLeaderboard.length,
+        topEventType: nextLeaderboard[0]?.event_type ?? null,
+      });
+    } catch (error) {
+      logBroadcasterLive("error", matchId, "refreshLeaderboard:failed", { source, error });
+      throw error;
+    }
   }, [matchId]);
 
-  const refreshAuctionResults = useCallback(async (): Promise<void> => {
+  const refreshAuctionResults = useCallback(async (source = "manual"): Promise<void> => {
     if (!Number.isFinite(matchId)) {
       return;
     }
 
-    const results = await getAuctionResults(matchId);
-    setAuctionResults(results);
+    logBroadcasterLive("debug", matchId, "refreshAuctionResults:start", { source });
+
+    try {
+      const results = await getAuctionResults(matchId);
+      setAuctionResults(results);
+      logBroadcasterLive("debug", matchId, "refreshAuctionResults:success", {
+        source,
+        groups: results.length,
+      });
+    } catch (error) {
+      logBroadcasterLive("error", matchId, "refreshAuctionResults:failed", { source, error });
+      throw error;
+    }
   }, [matchId]);
 
-  const refreshMatchDetail = useCallback(async (): Promise<void> => {
+  const refreshMatchDetail = useCallback(async (source = "manual"): Promise<void> => {
     if (!Number.isFinite(matchId)) {
       return;
     }
 
-    const detail = await getMatchDetail(matchId);
-    setMatchDetail(detail);
-    setCategories(deriveCategories(defaultCategories, detail.event_configs));
+    logBroadcasterLive("debug", matchId, "refreshMatchDetail:start", { source });
+
+    try {
+      const detail = await getMatchDetail(matchId);
+      setMatchDetail(detail);
+      setCategories(deriveCategories(defaultCategories, detail.event_configs));
+      logBroadcasterLive("debug", matchId, "refreshMatchDetail:success", {
+        source,
+        state: detail.state,
+        stateLabel: detail.state_label,
+      });
+    } catch (error) {
+      logBroadcasterLive("error", matchId, "refreshMatchDetail:failed", { source, error });
+      throw error;
+    }
   }, [matchId]);
 
   const loadPage = useCallback(async (): Promise<void> => {
@@ -312,6 +348,7 @@ export default function BroadcasterMatchDetailPage() {
 
     setIsLoading(true);
     setPageError("");
+    logBroadcasterLive("info", matchId, "loadPage:start");
 
     try {
       const [detail, nextLeaderboard, results] = await Promise.all([
@@ -324,7 +361,14 @@ export default function BroadcasterMatchDetailPage() {
       setCategories(deriveCategories(defaultCategories, detail.event_configs));
       setLeaderboard(nextLeaderboard);
       setAuctionResults(results);
+      logBroadcasterLive("info", matchId, "loadPage:success", {
+        leaderboardEvents: nextLeaderboard.length,
+        auctionResults: results.length,
+        state: detail.state,
+        stateLabel: detail.state_label,
+      });
     } catch (error) {
+      logBroadcasterLive("error", matchId, "loadPage:failed", { error });
       const message =
         error instanceof BroadcasterApiError
           ? error.message
@@ -346,42 +390,127 @@ export default function BroadcasterMatchDetailPage() {
 
     const socket = new WebSocket(`${WS_BASE_URL}/ws/matches/${matchId}/`);
 
+    socket.onopen = () => {
+      logBroadcasterLive("info", matchId, "websocket:open", { url: `${WS_BASE_URL}/ws/matches/${matchId}/` });
+    };
+
+    socket.onerror = (event) => {
+      logBroadcasterLive("warn", matchId, "websocket:error", event);
+    };
+
     socket.onmessage = (event) => {
       try {
-        const parsed = JSON.parse(event.data) as { event?: string };
-        if (!parsed.event) {
+        const parsed = JSON.parse(event.data) as {
+          event?: string;
+          type?: string;
+          payload?: {
+            event_type?: number;
+            state?: number;
+            trigger_number?: number;
+          };
+          data?: {
+            event?: string;
+            payload?: {
+              event_type?: number;
+              state?: number;
+              trigger_number?: number;
+            };
+          };
+        };
+
+        const eventName =
+          parsed.event ??
+          parsed.type ??
+          parsed.data?.event ??
+          "";
+
+        const payload = parsed.payload ?? parsed.data?.payload;
+        const hasEventHint =
+          typeof payload?.event_type === "number" ||
+          typeof payload?.trigger_number === "number" ||
+          typeof payload?.state === "number";
+
+        if (!eventName && !hasEventHint) {
+          logBroadcasterLive("debug", matchId, "websocket:message-ignored", { raw: parsed });
           return;
         }
 
-        if (parsed.event === "bid_placed" || parsed.event === "bid_increased") {
-          void Promise.all([
-            refreshMatchDetail().catch(() => {}),
-            refreshLeaderboard().catch(() => {}),
-          ]);
-          return;
+        logBroadcasterLive("debug", matchId, "websocket:message", {
+          eventName,
+          payload,
+        });
+
+        const shouldRefreshResults =
+          eventName === "auction_settled" ||
+          typeof payload?.trigger_number === "number";
+
+        const shouldRefreshMatch =
+          eventName === "match_state_changed" ||
+          typeof payload?.state === "number" ||
+          eventName === "refund_processed";
+
+        const refreshTasks: Array<Promise<void>> = [
+          refreshLeaderboard("ws-message").catch((error) => {
+            logBroadcasterLive("warn", matchId, "websocket:leaderboard-refresh-failed", { error, eventName });
+          }),
+        ];
+
+        if (shouldRefreshResults) {
+          refreshTasks.push(
+            refreshAuctionResults("ws-auction").catch((error) => {
+              logBroadcasterLive("warn", matchId, "websocket:auction-results-refresh-failed", { error, eventName });
+            }),
+          );
         }
 
-        if (parsed.event === "auction_settled") {
-          void Promise.all([
-            refreshMatchDetail().catch(() => {}),
-            refreshLeaderboard().catch(() => {}),
-            refreshAuctionResults().catch(() => {}),
-          ]);
-          return;
+        if (shouldRefreshMatch || refreshTasks.length === 0) {
+          refreshTasks.push(
+            refreshMatchDetail("ws-state").catch((error) => {
+              logBroadcasterLive("warn", matchId, "websocket:match-refresh-failed", { error, eventName });
+            }),
+          );
         }
 
-        if (parsed.event === "match_state_changed") {
-          void refreshMatchDetail().catch(() => {});
-        }
+        void Promise.all(refreshTasks);
       } catch {
         // Ignore malformed websocket messages and keep the socket open.
       }
     };
 
     return () => {
+      logBroadcasterLive("info", matchId, "websocket:close");
       socket.close();
     };
   }, [matchId, refreshAuctionResults, refreshLeaderboard, refreshMatchDetail]);
+
+  useEffect(() => {
+    if (!Number.isFinite(matchId)) {
+      return;
+    }
+
+    const isPollEligible = matchDetail?.state === 1 || matchDetail?.state === 2;
+    if (!isPollEligible) {
+      return;
+    }
+
+    logBroadcasterLive("info", matchId, "poller:start", {
+      intervalMs: LEADERBOARD_POLL_INTERVAL_MS,
+      state: matchDetail?.state,
+      stateLabel: matchDetail?.state_label,
+    });
+
+    const timerId = window.setInterval(() => {
+      logBroadcasterLive("debug", matchId, "poller:tick");
+      void refreshLeaderboard("poll").catch((error) => {
+        logBroadcasterLive("warn", matchId, "poller:leaderboard-refresh-failed", { error });
+      });
+    }, LEADERBOARD_POLL_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(timerId);
+      logBroadcasterLive("info", matchId, "poller:stop");
+    };
+  }, [matchDetail?.state, matchDetail?.state_label, matchId, refreshLeaderboard]);
 
   useEffect(() => {
     if (!matchDetail) {
@@ -962,4 +1091,18 @@ export default function BroadcasterMatchDetailPage() {
       </div>
     </div>
   );
+}
+
+function logBroadcasterLive(
+  level: "info" | "warn" | "error" | "debug",
+  matchId: number,
+  message: string,
+  details?: unknown,
+): void {
+  const prefix = `[BroadcasterLive][match:${Number.isFinite(matchId) ? matchId : "invalid"}] ${message}`;
+  if (details === undefined) {
+    console[level](prefix);
+    return;
+  }
+  console[level](prefix, details);
 }

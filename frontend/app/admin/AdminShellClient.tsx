@@ -36,8 +36,9 @@ export default function AdminShellClient({ children }: { children: React.ReactNo
   };
 
   const navLinks = [
-    { name: "Observation Deck", href: "/admin", icon: LayoutDashboard },
-    { name: "Oracle Simulator", href: "/admin/simulator", icon: Activity },
+    { name: "System Overview", href: "/admin", icon: LayoutDashboard },
+    { name: "User Management", href: "/admin/users", icon: AlertTriangle },
+    { name: "Match Simulator", href: "/admin/simulator", icon: Activity },
     { name: "Protocol Config", href: "/admin/protocol", icon: Code },
     { name: "Network Alerts", href: "/admin/alerts", icon: ShieldAlert },
   ];
@@ -56,7 +57,7 @@ export default function AdminShellClient({ children }: { children: React.ReactNo
         <nav className="flex-1 px-4 py-6 flex flex-col gap-2">
           <p className="px-4 text-[10px] uppercase font-bold tracking-widest text-white/40 mb-2">Network Control</p>
           {navLinks.map((link) => {
-            const isActive = pathname === link.href;
+            const isActive = link.href === "/admin" ? pathname === link.href : pathname.startsWith(link.href);
             const Icon = link.icon;
             return (
                <Link
@@ -86,9 +87,14 @@ export default function AdminShellClient({ children }: { children: React.ReactNo
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-16 md:h-20 bg-white border-b border-[#CED3DC] flex items-center justify-between px-6 md:px-10 sticky top-0 z-10 shrink-0">
            <div className="flex items-center gap-4">
-             <span className="text-[10px] uppercase tracking-widest font-bold text-[#1a1a1a] bg-[#FCF7F8] px-3 py-1.5 border border-[#CED3DC]">
-               System Status: <span className="text-[#4E8098] ml-1">OPTIMAL</span>
-             </span>
+             <div className="flex items-center gap-2">
+               <span className="text-[10px] uppercase tracking-widest font-bold text-[#1a1a1a] bg-[#FCF7F8] px-3 py-1.5 border border-[#CED3DC]">
+                 System Status: <span className="text-[#4E8098] ml-1">OPTIMAL</span>
+               </span>
+               <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-semibold text-[#A31621] border border-[#A31621]/30 px-2 py-1 bg-[#FCF7F8]">
+                 <AlertTriangle className="w-3 h-3" /> Hardcoded
+               </span>
+             </div>
            </div>
            
            <div className="flex items-center gap-6">
@@ -98,7 +104,7 @@ export default function AdminShellClient({ children }: { children: React.ReactNo
               </button>
               
               <div className="flex items-center gap-3 pl-6 border-l border-[#CED3DC]">
-                 <div className="w-8 h-8 bg-[#A31621] flex items-center justify-center text-white text-xs font-bold font-mono">
+                  <div className="w-8 h-8 bg-[#A31621] flex items-center justify-center text-white text-xs font-bold font-mono">
                     AD
                  </div>
                  <div className="hidden sm:block text-sm">
