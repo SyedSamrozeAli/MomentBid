@@ -12,6 +12,8 @@ import {
   type MatchRecord,
 } from "@/lib/brandApi";
 
+const WS_BASE_URL = (process.env.NEXT_PUBLIC_WS_BASE_URL ?? "ws://localhost:8000").replace(/\/+$/, "");
+
 type MatchHistory = {
   id: number;
   match: string;
@@ -45,6 +47,7 @@ function isTerminalMatch(match: MatchRecord): boolean {
 
 export default function HistoryPage() {
   const [records, setRecords] = useState<MatchHistory[]>([]);
+  const [brandName, setBrandName] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isClaimingMatchId, setIsClaimingMatchId] = useState<number | null>(null);
   const [error, setError] = useState("");
@@ -55,7 +58,8 @@ export default function HistoryPage() {
 
     try {
       const [matches, userContext] = await Promise.all([listMatches(), getCurrentUserContext()]);
-      const brandName = userContext.org?.name;
+      const nextBrandName = userContext.org?.name ?? "";
+      setBrandName(nextBrandName);
       const terminalMatches = matches.filter(isTerminalMatch);
 
       const historyRows = await Promise.all(
@@ -67,7 +71,7 @@ export default function HistoryPage() {
 
           const refundAmount = refunds.reduce((sum, refund) => sum + parseAmount(refund.amount), 0);
           const spendAmount = bids
-            .filter((bid) => bid.is_settled && (!brandName || bid.brand === brandName))
+            .filter((bid) => bid.is_settled && (!nextBrandName || bid.brand === nextBrandName))
             .reduce((sum, bid) => sum + parseAmount(bid.amount), 0);
 
           return {
@@ -98,6 +102,71 @@ export default function HistoryPage() {
     void loadHistory();
   }, [loadHistory]);
 
+  useEffect(() => {
+    if (!brandName) {
+      return;
+    }
+
+    const matchIdsToWatch = records
+      .filter((record) => record.canClaimRefund)
+      .map((record) => record.id);
+
+    if (matchIdsToWatch.length === 0) {
+      return;
+    }
+
+    const sockets = matchIdsToWatch.map((matchId) => {
+      const socket = new WebSocket(`${WS_BASE_URL}/ws/matches/${matchId}/`);
+
+      socket.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data) as {
+            event?: string;
+            payload?: { brand?: string };
+          };
+
+          if (parsed.event !== "refund_processed") {
+            return;
+          }
+
+          if (parsed.payload?.brand && parsed.payload.brand !== brandName) {
+            return;
+          }
+
+          void listRefunds(matchId)
+            .then((refunds) => {
+              const refundAmount = refunds.reduce((sum, refund) => sum + parseAmount(refund.amount), 0);
+              setRecords((previous) =>
+                previous.map((record) =>
+                  record.id === matchId
+                    ? {
+                        ...record,
+                        refund: refundAmount,
+                        status: refundAmount > 0 ? "Completed" : "Refund Pending",
+                        canClaimRefund: refundAmount === 0,
+                      }
+                    : record,
+                ),
+              );
+            })
+            .catch(() => {
+              // Ignore refresh errors; user can still manually refresh by navigating.
+            });
+        } catch {
+          // Ignore malformed websocket messages and keep the socket open.
+        }
+      };
+
+      return socket;
+    });
+
+    return () => {
+      sockets.forEach((socket) => {
+        socket.close();
+      });
+    };
+  }, [brandName, records]);
+
   const handleClaimRefund = useCallback(
     async (matchId: number): Promise<void> => {
       if (isClaimingMatchId !== null) {
@@ -108,8 +177,20 @@ export default function HistoryPage() {
       setError("");
 
       try {
-        await claimRefund(matchId);
-        await loadHistory();
+        const refund = await claimRefund(matchId);
+        const refundAmount = parseAmount(refund.amount);
+        setRecords((previous) =>
+          previous.map((record) =>
+            record.id === matchId
+              ? {
+                  ...record,
+                  refund: refundAmount,
+                  status: refundAmount > 0 ? "Completed" : "Refund Pending",
+                  canClaimRefund: refundAmount === 0,
+                }
+              : record,
+          ),
+        );
       } catch (claimError) {
         const message =
           claimError instanceof BrandApiError
@@ -120,7 +201,7 @@ export default function HistoryPage() {
         setIsClaimingMatchId(null);
       }
     },
-    [isClaimingMatchId, loadHistory],
+    [isClaimingMatchId],
   );
 
   return (
