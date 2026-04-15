@@ -47,6 +47,7 @@ type ApiEnvelope<T> = {
 type LoginResponseData = {
   username: string;
   email: string;
+  role: string | null;
   org_type: OrgType;
   tokens: AuthTokens;
 };
@@ -477,23 +478,17 @@ export async function loginWithCredentials(username: string, password: string): 
     throw new ApiRequestError("Authentication tokens were not returned by the server.", 500);
   }
 
-  if (normalizedUsername === "admin" && password === "123") {
-    const forcedAdminUser: AuthUserProfile = {
+  const loginRole = isUserRole(loginResponse.role) ? loginResponse.role : null;
+  if (loginRole) {
+    return completeAuthSession(tokens, {
       id: 0,
       username: loginResponse.username,
       email: loginResponse.email,
-      role: "admin",
-    };
-
-    persistAuthSession(tokens, forcedAdminUser);
-
-    return {
-      role: "admin",
-      redirectPath: getHomeRouteForRole("admin"),
-      user: forcedAdminUser,
-    };
+      role: loginRole,
+    });
   }
 
+  // Backward-compatibility fallback for older API responses that only returned org_type.
   const fallbackRole = mapOrgTypeToRole(loginResponse.org_type);
   if (fallbackRole) {
     return completeAuthSession(tokens, {
