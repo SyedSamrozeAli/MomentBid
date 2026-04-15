@@ -6,6 +6,7 @@ from apps.matches.views import (
     ExclusionGroupMemberView,
     MatchDetailView,
     MatchEventConfigCreateView,
+    MatchEventConfigDetailView,
     MatchListCreateView,
     MatchOpenBiddingView,
     SimulatorCancelView,
@@ -20,6 +21,7 @@ urlpatterns = [
     path("matches/", MatchListCreateView.as_view(), name="match-list-create"),
     path("matches/<int:match_id>/", MatchDetailView.as_view(), name="match-detail"),
     path("matches/<int:match_id>/event-configs/", MatchEventConfigCreateView.as_view(), name="match-event-config"),
+    path("matches/<int:match_id>/event-configs/<int:event_type>/", MatchEventConfigDetailView.as_view(), name="match-event-config-detail"),
     path("matches/<int:match_id>/open-bidding/", MatchOpenBiddingView.as_view(), name="match-open-bidding"),
 
     # Exclusion Groups

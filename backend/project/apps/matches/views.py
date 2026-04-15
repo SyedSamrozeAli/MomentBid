@@ -25,11 +25,35 @@ from utils.custom_response import CustomResponse
 from utils.validation import serializer_validation_error_response
 
 
+def _is_brand_user(user) -> bool:
+    return bool(
+        user
+        and user.is_authenticated
+        and getattr(user, "brand_id", None)
+        and user.role in {User.Role.BRAND_OWNER, User.Role.BRAND_MEMBER}
+    )
+
+
+def _apply_brand_match_visibility(queryset, user):
+    """Hide CREATED matches from brand users across list/detail endpoints."""
+    if _is_brand_user(user):
+        return queryset.filter(
+            state__in={
+                Match.State.OPEN,
+                Match.State.ACTIVE,
+                Match.State.COMPLETED,
+                Match.State.CANCELLED,
+            }
+        )
+    return queryset
+
+
 class MatchListCreateView(APIView):
     def get(self, request):
         queryset = Match.objects.select_related("broadcaster").prefetch_related(
             "event_configs"
         )
+        queryset = _apply_brand_match_visibility(queryset, request.user)
 
         state_filter = request.query_params.get("state")
         if state_filter is not None:
@@ -103,10 +127,13 @@ class MatchListCreateView(APIView):
 
 class MatchDetailView(APIView):
     def get(self, request, match_id: int):
+        queryset = Match.objects.select_related("broadcaster").prefetch_related(
+            "event_configs"
+        )
+        queryset = _apply_brand_match_visibility(queryset, request.user)
+
         match = get_object_or_404(
-            Match.objects.select_related("broadcaster").prefetch_related(
-                "event_configs"
-            ),
+            queryset,
             pk=match_id,
         )
         bids_summary_qs = (
@@ -134,6 +161,17 @@ class MatchDetailView(APIView):
 
 class MatchEventConfigCreateView(APIView):
     permission_classes = [IsBroadcasterUser]
+
+    def get(self, request, match_id: int):
+        match = get_object_or_404(Match, pk=match_id)
+        if match.broadcaster_id != request.user.broadcaster_id:
+            return CustomResponse.error(
+                message="You do not own this match",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        from apps.matches.serializers import MatchEventConfigSerializer
+        configs = MatchEventConfig.objects.filter(match=match).order_by("event_type")
+        return CustomResponse.success(data=MatchEventConfigSerializer(configs, many=True).data)
 
     def post(self, request, match_id: int):
         match = get_object_or_404(Match, pk=match_id)
@@ -188,6 +226,120 @@ class MatchEventConfigCreateView(APIView):
 
         return CustomResponse.success(
             data={"id": event_config.id}, status_code=status.HTTP_201_CREATED
+        )
+
+
+class MatchEventConfigDetailView(APIView):
+    """
+    GET    /matches/{id}/event-configs/{event_type}/  — retrieve one event config
+    PATCH  /matches/{id}/event-configs/{event_type}/  — update (CREATED state only)
+    DELETE /matches/{id}/event-configs/{event_type}/  — delete (CREATED state only)
+    """
+
+    permission_classes = [IsBroadcasterUser]
+
+    def _get_config(self, match_id: int, event_type: int, broadcaster_id: int):
+        match = get_object_or_404(Match, pk=match_id)
+        if match.broadcaster_id != broadcaster_id:
+            return None, None, "forbidden"
+        config = get_object_or_404(MatchEventConfig, match=match, event_type=event_type)
+        return match, config, None
+
+    def get(self, request, match_id: int, event_type: int):
+        match, config, err = self._get_config(
+            match_id, event_type, request.user.broadcaster_id
+        )
+        if err:
+            return CustomResponse.error(
+                message="You do not own this match",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        from apps.matches.serializers import MatchEventConfigSerializer
+
+        return CustomResponse.success(data=MatchEventConfigSerializer(config).data)
+
+    def patch(self, request, match_id: int, event_type: int):
+        match, config, err = self._get_config(
+            match_id, event_type, request.user.broadcaster_id
+        )
+        if err:
+            return CustomResponse.error(
+                message="You do not own this match",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        if match.state != Match.State.CREATED:
+            return CustomResponse.error(
+                message="Event configs can only be updated in CREATED state",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = MatchEventConfigCreateSerializer(
+            config, data=request.data, partial=True
+        )
+        if not serializer.is_valid():
+            return serializer_validation_error_response(serializer)
+
+        # Prevent changing event_type via PATCH (it's the identifier)
+        serializer.validated_data.pop("event_type", None)
+
+        blockchain_service = get_blockchain_service()
+        with transaction.atomic():
+            updated = serializer.save()
+            tx_result = blockchain_service.configure_event(
+                request.user.broadcaster.decrypt_private_key(),
+                int(match.on_chain_match_id or 0),
+                event_type,
+                int(updated.reserve_price),
+                int(updated.reservation_fee_pct),
+                updated.slot_count,
+                updated.max_triggers,
+            )
+
+            Transaction.objects.create(
+                broadcaster=request.user.broadcaster,
+                initiated_by=request.user,
+                action="configure_event",
+                tx_hash=tx_result.tx_hash,
+                status=(
+                    Transaction.Status.CONFIRMED
+                    if tx_result.success
+                    else Transaction.Status.FAILED
+                ),
+                gas_used=tx_result.gas_used,
+                error_message=tx_result.error,
+                metadata={"match_id": match.id, "event_type": event_type},
+            )
+
+        if not tx_result.success:
+            return CustomResponse.error(
+                message="Event configuration updated locally but blockchain call failed",
+                error=tx_result.error,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from apps.matches.serializers import MatchEventConfigSerializer
+
+        return CustomResponse.success(data=MatchEventConfigSerializer(updated).data)
+
+    def delete(self, request, match_id: int, event_type: int):
+        match, config, err = self._get_config(
+            match_id, event_type, request.user.broadcaster_id
+        )
+        if err:
+            return CustomResponse.error(
+                message="You do not own this match",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        if match.state != Match.State.CREATED:
+            return CustomResponse.error(
+                message="Event configs can only be deleted in CREATED state",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        config.delete()
+        return CustomResponse.success(
+            message="Event config deleted",
+            status_code=status.HTTP_200_OK,
         )
 
 

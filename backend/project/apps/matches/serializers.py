@@ -78,13 +78,13 @@ class MatchEventConfigCreateSerializer(serializers.ModelSerializer):
     reservation_fee_pct = serializers.DecimalField(
         max_digits=4,
         decimal_places=2,
-        min_value=0,
-        max_value=100,
+        min_value=1,
+        max_value=5,
         error_messages={
             "required": "Reservation fee percentage is required.",
             "invalid": "Reservation fee percentage must be a valid number.",
-            "min_value": "Reservation fee percentage cannot be negative.",
-            "max_value": "Reservation fee percentage cannot exceed 100.",
+            "min_value": "Reservation fee percentage must be at least 1 percent.",
+            "max_value": "Reservation fee percentage cannot exceed 5 percent (contract limit).",
         },
     )
     slot_count = serializers.IntegerField(
