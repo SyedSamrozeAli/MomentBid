@@ -1,17 +1,21 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CircleDollarSign, ArrowUpRight, ArrowDownRight, Wallet, History, Lock, Unlock } from "lucide-react";
+import {
+  BrandApiError,
+  createDeposit,
+  getBalance,
+  getBrandDashboard,
+  getCurrentUserContext,
+  listDeposits,
+  type Deposit,
+} from "@/lib/brandApi";
 
 const topUpOptions = [250000, 500000, 1000000, 2000000];
 const withdrawOptions = [150000, 300000, 750000];
 
-const balanceState = {
-  walletBalance: 4850000,
-  escrowLocked: 2300000,
-  withdrawable: 2550000,
-  lastSettlement: "PKR 680,000 spent on LAST_OVER_THRILLER",
-  walletAddress: "0x62A7...kababjees...9fE1",
-};
-
-const recentMoneyMoves = [
+const staticMoneyMoves = [
   {
     type: "Top Up",
     amount: 1000000,
@@ -38,6 +42,29 @@ const recentMoneyMoves = [
   },
 ];
 
+type BalanceState = {
+  walletBalance: number;
+  escrowLocked: number;
+  withdrawable: number;
+  walletAddress: string;
+};
+
+const INITIAL_BALANCE_STATE: BalanceState = {
+  walletBalance: 0,
+  escrowLocked: 0,
+  withdrawable: 0,
+  walletAddress: "-",
+};
+
+type MoneyMove = {
+  type: string;
+  amount: number;
+  status: string;
+  context: string;
+  icon: typeof ArrowUpRight;
+  color: "cyan" | "indigo" | "emerald";
+};
+
 function formatPKR(amount: number) {
   return new Intl.NumberFormat("en-PK", {
     style: "currency",
@@ -46,7 +73,99 @@ function formatPKR(amount: number) {
   }).format(amount);
 }
 
+function parseAmount(value: string): number {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.round(parsed);
+}
+
+function toDepositMove(deposit: Deposit): MoneyMove {
+  return {
+    type: "Top Up",
+    amount: parseAmount(deposit.amount_pkr),
+    status: deposit.status,
+    context: `Deposit transaction ${deposit.tx_hash}`,
+    icon: ArrowUpRight,
+    color: "cyan",
+  };
+}
+
 export default function BalancePage() {
+  const [balanceState, setBalanceState] = useState<BalanceState>(INITIAL_BALANCE_STATE);
+  const [deposits, setDeposits] = useState<Deposit[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isDepositingAmount, setIsDepositingAmount] = useState<number | null>(null);
+  const [error, setError] = useState("");
+
+  const loadWalletData = useCallback(async (): Promise<void> => {
+    setIsLoading(true);
+    setError("");
+
+    try {
+      const [balance, dashboard, userContext, depositList] = await Promise.all([
+        getBalance(),
+        getBrandDashboard(),
+        getCurrentUserContext(),
+        listDeposits(),
+      ]);
+
+      setBalanceState({
+        walletBalance: balance.balance_pkr,
+        escrowLocked: parseAmount(dashboard.escrowed_total),
+        withdrawable: balance.balance_pkr,
+        walletAddress: userContext.org?.wallet_address ?? "-",
+      });
+      setDeposits(depositList);
+    } catch (loadError) {
+      const message =
+        loadError instanceof BrandApiError ? loadError.message : "Unable to load wallet data right now.";
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadWalletData();
+  }, [loadWalletData]);
+
+  const recentMoneyMoves = useMemo<MoneyMove[]>(() => {
+    const apiMoves = deposits
+      .slice()
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map(toDepositMove);
+
+    return [...apiMoves, ...staticMoneyMoves];
+  }, [deposits]);
+
+  const handleDeposit = useCallback(
+    async (amount: number): Promise<void> => {
+      if (isDepositingAmount !== null) {
+        return;
+      }
+
+      setIsDepositingAmount(amount);
+      setError("");
+
+      try {
+        await createDeposit(String(amount));
+        await loadWalletData();
+      } catch (depositError) {
+        const message =
+          depositError instanceof BrandApiError
+            ? depositError.message
+            : "Unable to process deposit right now.";
+        setError(message);
+      } finally {
+        setIsDepositingAmount(null);
+      }
+    },
+    [isDepositingAmount, loadWalletData],
+  );
+
   return (
     <div className="flex flex-col space-y-8">
       
@@ -73,6 +192,12 @@ export default function BalancePage() {
           </div>
         </div>
       </header>
+
+      {error ? (
+        <div className="border border-[#A31621]/30 bg-[#FCF7F8] px-4 py-3 text-sm text-[#A31621]">
+          {error}
+        </div>
+      ) : null}
 
       {/* Overview Cards */}
       <section className="grid gap-4 sm:grid-cols-3">
@@ -113,12 +238,14 @@ export default function BalancePage() {
               <button
                 type="button"
                 key={amount}
+                onClick={() => void handleDeposit(amount)}
+                disabled={isLoading || isDepositingAmount !== null}
                 className="group border border-[#CED3DC] bg-[#FCF7F8] px-4 py-3.5 transition-colors hover:border-[#90C2E7]/50 text-left hover:bg-white"
               >
                 <div className="flex flex-col">
                   <span className="text-[10px] uppercase tracking-widest text-[#4E8098] font-semibold mb-1 group-hover:text-[#90C2E7] transition-colors">Add Line</span>
                   <span className="text-sm font-semibold tracking-wide text-[#1a1a1a] group-hover:text-[#90C2E7] font-mono transition-colors">
-                    {formatPKR(amount)}
+                    {isDepositingAmount === amount ? "Processing..." : formatPKR(amount)}
                   </span>
                 </div>
               </button>

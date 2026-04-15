@@ -1,36 +1,26 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
 import { Archive, History as HistoryIcon, FileText, Download, Check, AlertCircle } from "lucide-react";
+import {
+  BrandApiError,
+  claimRefund,
+  getCurrentUserContext,
+  listMatchBids,
+  listMatches,
+  listRefunds,
+  type MatchRecord,
+} from "@/lib/brandApi";
 
 type MatchHistory = {
+  id: number;
   match: string;
   spend: number;
   refund: number;
   reservationFee: number;
   status: "Completed" | "Refund Pending";
+  canClaimRefund: boolean;
 };
-
-const records: MatchHistory[] = [
-  {
-    match: "Karachi Kings vs Lahore Qalandars",
-    spend: 2080000,
-    refund: 390000,
-    reservationFee: 10000,
-    status: "Completed",
-  },
-  {
-    match: "Peshawar Zalmi vs Quetta Gladiators",
-    spend: 920000,
-    refund: 240000,
-    reservationFee: 12000,
-    status: "Refund Pending",
-  },
-  {
-    match: "Islamabad United vs Multan Sultans",
-    spend: 1760000,
-    refund: 0,
-    reservationFee: 0,
-    status: "Completed",
-  },
-];
 
 function formatPKR(amount: number) {
   return new Intl.NumberFormat("en-PK", {
@@ -40,7 +30,99 @@ function formatPKR(amount: number) {
   }).format(amount);
 }
 
+function parseAmount(value: string): number {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.round(parsed);
+}
+
+function isTerminalMatch(match: MatchRecord): boolean {
+  return match.state === 3 || match.state === 4;
+}
+
 export default function HistoryPage() {
+  const [records, setRecords] = useState<MatchHistory[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isClaimingMatchId, setIsClaimingMatchId] = useState<number | null>(null);
+  const [error, setError] = useState("");
+
+  const loadHistory = useCallback(async (): Promise<void> => {
+    setIsLoading(true);
+    setError("");
+
+    try {
+      const [matches, userContext] = await Promise.all([listMatches(), getCurrentUserContext()]);
+      const brandName = userContext.org?.name;
+      const terminalMatches = matches.filter(isTerminalMatch);
+
+      const historyRows = await Promise.all(
+        terminalMatches.map(async (match): Promise<MatchHistory> => {
+          const [refunds, bids] = await Promise.all([
+            listRefunds(match.id),
+            listMatchBids(match.id),
+          ]);
+
+          const refundAmount = refunds.reduce((sum, refund) => sum + parseAmount(refund.amount), 0);
+          const spendAmount = bids
+            .filter((bid) => bid.is_settled && (!brandName || bid.brand === brandName))
+            .reduce((sum, bid) => sum + parseAmount(bid.amount), 0);
+
+          return {
+            id: match.id,
+            match: `${match.team_a} vs ${match.team_b}`,
+            spend: spendAmount,
+            refund: refundAmount,
+            reservationFee: 0,
+            status: refundAmount > 0 ? "Completed" : "Refund Pending",
+            canClaimRefund: refundAmount === 0,
+          };
+        }),
+      );
+
+      setRecords(historyRows);
+    } catch (loadError) {
+      const message =
+        loadError instanceof BrandApiError
+          ? loadError.message
+          : "Unable to load settlement history right now.";
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
+  const handleClaimRefund = useCallback(
+    async (matchId: number): Promise<void> => {
+      if (isClaimingMatchId !== null) {
+        return;
+      }
+
+      setIsClaimingMatchId(matchId);
+      setError("");
+
+      try {
+        await claimRefund(matchId);
+        await loadHistory();
+      } catch (claimError) {
+        const message =
+          claimError instanceof BrandApiError
+            ? claimError.message
+            : "Unable to claim refund right now.";
+        setError(message);
+      } finally {
+        setIsClaimingMatchId(null);
+      }
+    },
+    [isClaimingMatchId, loadHistory],
+  );
+
   return (
     <div className="flex flex-col space-y-8">
       
@@ -57,6 +139,12 @@ export default function HistoryPage() {
           </p>
         </div>
       </header>
+
+      {error ? (
+        <div className="border border-[#A31621]/30 bg-[#FCF7F8] px-4 py-3 text-sm text-[#A31621]">
+          {error}
+        </div>
+      ) : null}
 
       {/* Main Table */}
       <section>
@@ -84,8 +172,21 @@ export default function HistoryPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#CED3DC]/50">
-                {records.map((record) => (
-                  <tr key={record.match} className="group transition-colors hover:bg-[#FCF7F8]">
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-6 text-sm text-[#4E8098]">
+                      Loading history...
+                    </td>
+                  </tr>
+                ) : records.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-6 text-sm text-[#4E8098]">
+                      No completed or cancelled matches available yet.
+                    </td>
+                  </tr>
+                ) : (
+                  records.map((record) => (
+                  <tr key={record.id} className="group transition-colors hover:bg-[#FCF7F8]">
                     <td className="px-6 py-5">
                       <span className="font-medium text-[#1a1a1a]">{record.match}</span>
                     </td>
@@ -106,12 +207,14 @@ export default function HistoryPage() {
                       </span>
                     </td>
                     <td className="px-6 py-5 text-right flex items-center justify-end gap-2">
-                      {record.status === "Refund Pending" ? (
+                      {record.canClaimRefund ? (
                         <button
                           type="button"
+                          onClick={() => void handleClaimRefund(record.id)}
+                          disabled={isClaimingMatchId !== null}
                           className="inline-flex items-center justify-center border border-[#A31621] bg-[#FCF7F8] px-4 py-2 text-[11px] font-semibold uppercase tracking-widest text-[#A31621] transition-all hover:bg-[#A31621]/10 hover:text-[#A31621]"
                         >
-                          Claim Refund
+                          {isClaimingMatchId === record.id ? "Claiming..." : "Claim Refund"}
                         </button>
                       ) : (
                         <button
@@ -123,7 +226,8 @@ export default function HistoryPage() {
                       )}
                     </td>
                   </tr>
-                ))}
+                ))
+                )}
               </tbody>
             </table>
           </div>

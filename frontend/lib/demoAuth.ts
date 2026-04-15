@@ -18,10 +18,17 @@ export {
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api").replace(/\/+$/, "");
 const REQUEST_TIMEOUT_MS = 12000;
+const ACCOUNT_ROLE_ERROR_MESSAGE = "Unable to determine account role. Please contact support.";
 
 let refreshRequest: Promise<string | null> | null = null;
 
 export type UserRole = "brand_owner" | "broadcaster_owner" | "admin";
+
+const HOME_ROUTE_BY_ROLE: Readonly<Record<UserRole, string>> = {
+  brand_owner: "/brand",
+  broadcaster_owner: "/broadcaster",
+  admin: "/admin",
+};
 
 type OrgType = "brand" | "broadcaster" | null;
 
@@ -44,11 +51,20 @@ type LoginResponseData = {
   tokens: AuthTokens;
 };
 
+type CurrentUserResponseData = {
+  user: {
+    id: number;
+    username: string;
+    email: string;
+    role: string;
+  };
+};
+
 type RegisterUser = {
   id: number;
   username: string;
   email?: string;
-  role: UserRole;
+  role: string;
 };
 
 type RegisterBrandResponseData = {
@@ -244,23 +260,41 @@ function mapOrgTypeToRole(orgType: OrgType): UserRole | null {
   return null;
 }
 
+function createAuthUserProfile(candidate: {
+  id?: number;
+  username?: string;
+  email?: string;
+  role?: string;
+}): AuthUserProfile | null {
+  if (typeof candidate.username !== "string" || typeof candidate.email !== "string") {
+    return null;
+  }
+
+  if (!isUserRole(candidate.role)) {
+    return null;
+  }
+
+  return {
+    id: typeof candidate.id === "number" ? candidate.id : 0,
+    username: candidate.username,
+    email: candidate.email,
+    role: candidate.role,
+  };
+}
+
 function parseStoredUserProfile(rawProfile: string | null): AuthUserProfile | null {
   if (!rawProfile) {
     return null;
   }
 
   try {
-    const parsed = JSON.parse(rawProfile) as Partial<AuthUserProfile>;
-    if (!parsed.username || !parsed.email || !isUserRole(parsed.role)) {
-      return null;
-    }
-
-    return {
-      id: typeof parsed.id === "number" ? parsed.id : 0,
-      username: parsed.username,
-      email: parsed.email,
-      role: parsed.role,
+    const parsed = JSON.parse(rawProfile) as {
+      id?: number;
+      username?: string;
+      email?: string;
+      role?: string;
     };
+    return createAuthUserProfile(parsed);
   } catch {
     return null;
   }
@@ -282,16 +316,34 @@ function persistAuthSession(tokens: AuthTokens, user: AuthUserProfile): void {
 }
 
 async function fetchCurrentUser(accessToken: string): Promise<AuthUserProfile> {
-  return requestApi<AuthUserProfile>("/auth/me/", {
+  const response = await requestApi<CurrentUserResponseData>("/auth/me/", {
     method: "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
   });
+
+  const profile = createAuthUserProfile(response.user);
+  if (!profile) {
+    throw new ApiRequestError(ACCOUNT_ROLE_ERROR_MESSAGE, 403);
+  }
+
+  return profile;
 }
 
-async function completeAuthSession(tokens: AuthTokens, fallbackUser: AuthUserProfile): Promise<AuthResult> {
-  const user = await fetchCurrentUser(tokens.access).catch(() => fallbackUser);
+async function completeAuthSession(tokens: AuthTokens, fallbackUser?: AuthUserProfile): Promise<AuthResult> {
+  const user = await fetchCurrentUser(tokens.access).catch((error: unknown) => {
+    if (!fallbackUser) {
+      throw new ApiRequestError(ACCOUNT_ROLE_ERROR_MESSAGE, 403);
+    }
+
+    if (error instanceof ApiRequestError && error.status >= 400 && error.status < 500) {
+      throw error;
+    }
+
+    return fallbackUser;
+  });
+
   persistAuthSession(tokens, user);
 
   return {
@@ -338,23 +390,6 @@ async function refreshAccessTokenInternal(): Promise<string | null> {
   }
 }
 
-function inferLegacyRole(username: string): UserRole | null {
-  const normalized = username.trim().toLowerCase();
-  if (normalized === "admin") {
-    return "admin";
-  }
-
-  if (normalized === "walee") {
-    return "broadcaster_owner";
-  }
-
-  if (normalized === "kababjees") {
-    return "brand_owner";
-  }
-
-  return null;
-}
-
 export function getAuthErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError || error instanceof Error) {
     return error.message;
@@ -391,19 +426,11 @@ export function getCurrentUserRole(): UserRole | null {
     return storedRole;
   }
 
-  const legacyRole = inferLegacyRole(safeStorageGet(window.sessionStorage, DEMO_AUTH_SESSION_KEY) ?? "");
-  return legacyRole;
+  return null;
 }
 
 export function getHomeRouteForRole(role: UserRole): string {
-  switch (role) {
-    case "brand_owner":
-      return "/brand";
-    case "broadcaster_owner":
-      return "/broadcaster";
-    case "admin":
-      return "/admin";
-  }
+  return HOME_ROUTE_BY_ROLE[role];
 }
 
 export function getHomeRouteForCurrentSession(): string | null {
@@ -451,30 +478,16 @@ export async function loginWithCredentials(username: string, password: string): 
   }
 
   const fallbackRole = mapOrgTypeToRole(loginResponse.org_type);
-  if (!fallbackRole && loginResponse.org_type === null) {
-    const adminFallback = loginResponse.username.trim().toLowerCase() === "admin" ? "admin" : null;
-    if (!adminFallback) {
-      throw new ApiRequestError("Unable to determine account role. Please contact support.", 403);
-    }
-
+  if (fallbackRole) {
     return completeAuthSession(tokens, {
       id: 0,
       username: loginResponse.username,
       email: loginResponse.email,
-      role: adminFallback,
+      role: fallbackRole,
     });
   }
 
-  if (!fallbackRole) {
-    throw new ApiRequestError("Unable to determine account role. Please contact support.", 403);
-  }
-
-  return completeAuthSession(tokens, {
-    id: 0,
-    username: loginResponse.username,
-    email: loginResponse.email,
-    role: fallbackRole,
-  });
+  return completeAuthSession(tokens);
 }
 
 export async function registerBrandAccount(payload: RegisterBrandPayload): Promise<AuthResult> {
@@ -490,6 +503,10 @@ export async function registerBrandAccount(payload: RegisterBrandPayload): Promi
       payload.logo,
     ),
   });
+
+  if (!isUserRole(response.user.role)) {
+    throw new ApiRequestError(ACCOUNT_ROLE_ERROR_MESSAGE, 403);
+  }
 
   return completeAuthSession(response.tokens, {
     id: response.user.id,
@@ -513,6 +530,10 @@ export async function registerBroadcasterAccount(payload: RegisterBroadcasterPay
     ),
   });
 
+  if (!isUserRole(response.user.role)) {
+    throw new ApiRequestError(ACCOUNT_ROLE_ERROR_MESSAGE, 403);
+  }
+
   return completeAuthSession(response.tokens, {
     id: response.user.id,
     username: response.user.username,
@@ -524,12 +545,6 @@ export async function registerBroadcasterAccount(payload: RegisterBroadcasterPay
 export function setDemoAuthSession(username: string): void {
   if (typeof window !== "undefined") {
     safeStorageSet(window.sessionStorage, DEMO_AUTH_SESSION_KEY, username);
-
-    const inferredRole = inferLegacyRole(username);
-    if (inferredRole) {
-      safeStorageSet(window.localStorage, AUTH_USER_ROLE_KEY, inferredRole);
-      setCookie(AUTH_ROLE_COOKIE, inferredRole, AUTH_MAX_AGE_SECONDS);
-    }
   }
 
   setCookie(DEMO_AUTH_COOKIE, DEMO_AUTH_COOKIE_VALUE, AUTH_MAX_AGE_SECONDS);

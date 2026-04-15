@@ -1,41 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Upload, FileVideo, ShieldCheck, Clock, CheckCircle2, XCircle, PlaySquare } from "lucide-react";
+import { BrandApiError, createCreative, getCreative, listCreatives, type Creative as ApiCreative } from "@/lib/brandApi";
 
 type CreativeStatus = "pending" | "approved" | "rejected";
 
 interface Creative {
-  id: string;
+  id: number;
   name: string;
   uploadDate: string;
   status: CreativeStatus;
   linkedEvents: string[];
+  adUrl: string;
+  description: string;
+  rejectionReason: string;
 }
 
-const mockCreatives: Creative[] = [
-  {
-    id: "c1",
-    name: "Summer Blast 2026 - 15s",
-    uploadDate: "Apr 10, 2026",
-    status: "approved",
-    linkedEvents: ["OVER_BREAK", "STRATEGIC_TIMEOUT"],
-  },
-  {
-    id: "c2",
-    name: "Hat-trick Special Animation",
-    uploadDate: "Apr 12, 2026",
-    status: "pending",
-    linkedEvents: ["HAT_TRICK", "WICKET_FALL"],
-  },
-  {
-    id: "c3",
-    name: "Sixer Celebration Promo",
-    uploadDate: "Apr 13, 2026",
-    status: "rejected",
-    linkedEvents: ["SIX_HIT", "HAT_TRICK_OF_SIXS"],
-  },
-];
+const HARDCODED_EVENT_LINKS_BY_TITLE: Record<string, string[]> = {
+  "Summer Blast 2026 - 15s": ["OVER_BREAK", "STRATEGIC_TIMEOUT"],
+  "Hat-trick Special Animation": ["HAT_TRICK", "WICKET_FALL"],
+  "Sixer Celebration Promo": ["SIX_HIT", "HAT_TRICK_OF_SIXS"],
+};
 
 const availableEvents = [
   "OVER_BREAK",
@@ -47,9 +33,127 @@ const availableEvents = [
   "HAT_TRICK_OF_SIXS",
 ];
 
+function formatUploadDate(value: string): string {
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return value;
+  }
+
+  return parsedDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function toCreativeView(creative: ApiCreative): Creative {
+  return {
+    id: creative.id,
+    name: creative.title,
+    uploadDate: formatUploadDate(creative.created_at),
+    status: creative.status,
+    linkedEvents: HARDCODED_EVENT_LINKS_BY_TITLE[creative.title] ?? [],
+    adUrl: creative.ad_url,
+    description: creative.description,
+    rejectionReason: creative.rejection_reason,
+  };
+}
+
 export default function BrandCreativesPage() {
-  const [creatives, setCreatives] = useState<Creative[]>(mockCreatives);
-  const [selectedCreative, setSelectedCreative] = useState<Creative | null>(null);
+  const [creatives, setCreatives] = useState<Creative[]>([]);
+  const [selectedCreativeId, setSelectedCreativeId] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUploadFormOpen, setIsUploadFormOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadDescription, setUploadDescription] = useState("");
+  const [uploadUrl, setUploadUrl] = useState("");
+
+  const selectedCreative = useMemo(
+    () => creatives.find((creative) => creative.id === selectedCreativeId) ?? null,
+    [creatives, selectedCreativeId],
+  );
+
+  const loadCreatives = useCallback(async (): Promise<void> => {
+    setIsLoading(true);
+    setError("");
+
+    try {
+      const response = await listCreatives({ ordering: "-created_at" });
+      const mapped = response.map(toCreativeView);
+      setCreatives(mapped);
+
+      if (mapped.length > 0 && (selectedCreativeId === null || !mapped.some((item) => item.id === selectedCreativeId))) {
+        setSelectedCreativeId(mapped[0].id);
+      }
+    } catch (loadError) {
+      const message =
+        loadError instanceof BrandApiError
+          ? loadError.message
+          : "Unable to load creatives right now.";
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedCreativeId]);
+
+  useEffect(() => {
+    void loadCreatives();
+  }, [loadCreatives]);
+
+  const refreshSelectedCreative = useCallback(async (): Promise<void> => {
+    if (selectedCreativeId === null) {
+      return;
+    }
+
+    try {
+      const detail = await getCreative(selectedCreativeId);
+      setCreatives((previous) =>
+        previous.map((item) => (item.id === selectedCreativeId ? toCreativeView(detail) : item)),
+      );
+    } catch {
+      // Keep list state if detail call fails; the page is still usable.
+    }
+  }, [selectedCreativeId]);
+
+  useEffect(() => {
+    void refreshSelectedCreative();
+  }, [refreshSelectedCreative]);
+
+  const handleCreateCreative = useCallback(async (): Promise<void> => {
+    if (!uploadTitle.trim() || !uploadUrl.trim()) {
+      setError("Title and Ad URL are required.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError("");
+
+    try {
+      const created = await createCreative({
+        title: uploadTitle.trim(),
+        description: uploadDescription.trim(),
+        ad_url: uploadUrl.trim(),
+      });
+
+      const mapped = toCreativeView(created);
+      setCreatives((previous) => [mapped, ...previous]);
+      setSelectedCreativeId(mapped.id);
+      setUploadTitle("");
+      setUploadDescription("");
+      setUploadUrl("");
+      setIsUploadFormOpen(false);
+    } catch (createError) {
+      const message =
+        createError instanceof BrandApiError
+          ? createError.message
+          : "Unable to upload creative right now.";
+      setError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [uploadDescription, uploadTitle, uploadUrl]);
 
   const getStatusIcon = (status: CreativeStatus) => {
     switch (status) {
@@ -82,11 +186,57 @@ export default function BrandCreativesPage() {
             Upload your video creatives for upcoming matches. All materials are subject to review by the regulatory authority before they can be assigned to live event slots.
           </p>
         </div>
-        <button className="bg-[#1a1a1a] hover:bg-[#333] text-white px-5 py-3 text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={() => setIsUploadFormOpen((prev) => !prev)}
+          className="bg-[#1a1a1a] hover:bg-[#333] text-white px-5 py-3 text-xs font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2 shrink-0"
+        >
           <Upload className="w-4 h-4" />
           Upload New Ad
         </button>
       </div>
+
+      {error ? (
+        <div className="mx-0 sm:mx-6 border border-[#A31621]/30 bg-[#FCF7F8] px-4 py-3 text-sm text-[#A31621]">
+          {error}
+        </div>
+      ) : null}
+
+      {isUploadFormOpen ? (
+        <div className="mx-0 sm:mx-6 border border-[#CED3DC] bg-white p-6 grid gap-4 lg:grid-cols-3">
+          <div className="lg:col-span-3">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-[#1a1a1a]">Upload Creative</h3>
+          </div>
+          <input
+            type="text"
+            value={uploadTitle}
+            onChange={(event) => setUploadTitle(event.target.value)}
+            placeholder="Creative title"
+            className="border border-[#CED3DC] px-3 py-2 text-sm text-[#1a1a1a] focus:outline-none focus:border-[#90C2E7]"
+          />
+          <input
+            type="url"
+            value={uploadUrl}
+            onChange={(event) => setUploadUrl(event.target.value)}
+            placeholder="https://cdn.example.com/ad.mp4"
+            className="border border-[#CED3DC] px-3 py-2 text-sm text-[#1a1a1a] focus:outline-none focus:border-[#90C2E7]"
+          />
+          <button
+            type="button"
+            onClick={() => void handleCreateCreative()}
+            disabled={isSubmitting}
+            className="bg-[#1a1a1a] text-white px-4 py-2 text-xs font-bold uppercase tracking-widest hover:bg-[#333] disabled:opacity-60"
+          >
+            {isSubmitting ? "Submitting..." : "Submit"}
+          </button>
+          <textarea
+            value={uploadDescription}
+            onChange={(event) => setUploadDescription(event.target.value)}
+            placeholder="Optional description"
+            className="lg:col-span-3 border border-[#CED3DC] px-3 py-2 text-sm text-[#1a1a1a] min-h-24 focus:outline-none focus:border-[#90C2E7]"
+          />
+        </div>
+      ) : null}
 
       <div className="px-0 sm:px-6 grid lg:grid-cols-3 gap-6">
         
@@ -98,11 +248,16 @@ export default function BrandCreativesPage() {
           </div>
 
           <div className="grid gap-4">
-            {creatives.map((c) => (
+            {isLoading ? (
+              <div className="border border-[#CED3DC] bg-white p-6 text-sm text-[#4E8098]">Loading creatives...</div>
+            ) : creatives.length === 0 ? (
+              <div className="border border-[#CED3DC] bg-white p-6 text-sm text-[#4E8098]">No creatives uploaded yet.</div>
+            ) : (
+              creatives.map((c) => (
               <div 
                 key={c.id} 
-                onClick={() => setSelectedCreative(c)}
-                className={`bg-white border p-5 cursor-pointer transition-colors hover:border-[#4E8098] ${selectedCreative?.id === c.id ? "border-[#4E8098] ring-1 ring-[#4E8098]" : "border-[#CED3DC]"}`}
+                onClick={() => setSelectedCreativeId(c.id)}
+                className={`bg-white border p-5 cursor-pointer transition-colors hover:border-[#4E8098] ${selectedCreativeId === c.id ? "border-[#4E8098] ring-1 ring-[#4E8098]" : "border-[#CED3DC]"}`}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-4">
@@ -122,7 +277,8 @@ export default function BrandCreativesPage() {
                   </div>
                 </div>
               </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -153,6 +309,16 @@ export default function BrandCreativesPage() {
                 ) : (
                   <p className="text-xs text-[#4E8098] italic">No events linked yet.</p>
                 )}
+              </div>
+
+              <div className="bg-[#FCF7F8] border border-[#CED3DC] p-3 text-xs text-[#4E8098]">
+                <p className="font-mono break-all">URL: {selectedCreative.adUrl}</p>
+                {selectedCreative.description ? (
+                  <p className="mt-2">{selectedCreative.description}</p>
+                ) : null}
+                {selectedCreative.rejectionReason ? (
+                  <p className="mt-2 text-[#A31621]">Reason: {selectedCreative.rejectionReason}</p>
+                ) : null}
               </div>
 
               <div className="h-px bg-[#CED3DC] w-full" />

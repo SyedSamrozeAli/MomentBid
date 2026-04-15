@@ -1,5 +1,9 @@
+"use client";
+
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { ArrowRight, Activity, TrendingUp, ShieldCheck, Zap, Radio } from "lucide-react";
+import { BrandApiError, getBrandDashboard, getCurrentUserContext, getMatchLeaderboard, listMatches } from "@/lib/brandApi";
 
 type ActiveBid = {
   eventType: string;
@@ -17,7 +21,7 @@ const walletSnapshot = {
   seasonBudgetCap: 8000000,
 };
 
-const activeBids: ActiveBid[] = [
+const fallbackActiveBids: ActiveBid[] = [
   { eventType: "OVER_BREAK", bid: 400000, rank: 1, reserve: 100000, slots: 3, trend: "up" },
   { eventType: "STRATEGIC_TIMEOUT", bid: 500000, rank: 2, reserve: 300000, slots: 5, trend: "stable" },
   { eventType: "LAST_OVER_THRILLER", bid: 1500000, rank: 1, reserve: 700000, slots: 3, trend: "up" },
@@ -38,7 +42,121 @@ function formatPKR(amount: number) {
   }).format(amount);
 }
 
+function parseAmount(value: string): number {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.round(parsed);
+}
+
 export default function BrandDashboardPage() {
+  const [currentWalletSnapshot, setCurrentWalletSnapshot] = useState(walletSnapshot);
+  const [activeBids, setActiveBids] = useState<ActiveBid[]>(fallbackActiveBids);
+  const [activeFixtureTitle, setActiveFixtureTitle] = useState("No Active Match");
+  const [activeMatchLink, setActiveMatchLink] = useState("/brand/matches");
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDashboard(): Promise<void> {
+      setLoadError("");
+
+      try {
+        const [dashboard, matches, userContext] = await Promise.all([
+          getBrandDashboard(),
+          listMatches(),
+          getCurrentUserContext(),
+        ]);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setCurrentWalletSnapshot({
+          totalBalance: parseAmount(dashboard.total_deposited),
+          escrowed: parseAmount(dashboard.escrowed_total),
+          available: dashboard.balance_pkr,
+          seasonBudgetCap: walletSnapshot.seasonBudgetCap,
+        });
+
+        const liveMatch = matches.find((match) => match.state === 2);
+        const openMatch = matches.find((match) => match.state === 1);
+        const preferredMatch = liveMatch ?? openMatch ?? null;
+
+        if (!preferredMatch) {
+          setActiveFixtureTitle("No Active Match");
+          setActiveMatchLink("/brand/matches");
+          setActiveBids(fallbackActiveBids);
+          return;
+        }
+
+        setActiveFixtureTitle(`${preferredMatch.team_a} vs ${preferredMatch.team_b}`);
+        setActiveMatchLink(`/brand/matches/${preferredMatch.id}`);
+
+        const leaderboard = await getMatchLeaderboard(preferredMatch.id);
+        if (!isMounted) {
+          return;
+        }
+
+        const brandName = userContext.org?.name ?? "";
+        const reserveByEventType = new Map(
+          preferredMatch.event_configs.map((config) => [config.event_type, parseAmount(config.reserve_price)]),
+        );
+        const slotsByEventType = new Map(
+          preferredMatch.event_configs.map((config) => [config.event_type, config.slot_count]),
+        );
+
+        const mappedBids = leaderboard
+          .map((group) => {
+            const myBidIndex = group.bids.findIndex((bid) => bid.brand === brandName);
+            if (myBidIndex === -1) {
+              return null;
+            }
+
+            const myBid = group.bids[myBidIndex];
+            return {
+              eventType: group.event_type_label.toUpperCase().replace(/\s+/g, "_"),
+              bid: parseAmount(myBid.amount),
+              rank: myBidIndex + 1,
+              reserve: reserveByEventType.get(group.event_type) ?? 0,
+              slots: slotsByEventType.get(group.event_type) ?? 0,
+              trend: myBidIndex === 0 ? "up" : myBidIndex === 1 ? "stable" : "down",
+            } satisfies ActiveBid;
+          })
+          .filter((bid): bid is ActiveBid => bid !== null);
+
+        setActiveBids(mappedBids.length > 0 ? mappedBids : fallbackActiveBids);
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        const message =
+          error instanceof BrandApiError
+            ? error.message
+            : "Unable to load dashboard data right now.";
+        setLoadError(message);
+      }
+    }
+
+    void loadDashboard();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const utilizationPct = useMemo(() => {
+    if (!currentWalletSnapshot.seasonBudgetCap) {
+      return 0;
+    }
+
+    return Math.round((currentWalletSnapshot.escrowed / currentWalletSnapshot.seasonBudgetCap) * 100);
+  }, [currentWalletSnapshot.escrowed, currentWalletSnapshot.seasonBudgetCap]);
+
   return (
     <div className="flex flex-col space-y-10 pb-10">
       
@@ -60,35 +178,41 @@ export default function BrandDashboardPage() {
           <div>
             <p className="text-[10px] items-center gap-1 uppercase tracking-widest text-[#4E8098]/80 mb-0.5">Active Fixture</p>
             <p className="text-sm font-semibold text-[#1a1a1a]">
-              Karachi Kings vs Lahore Qalandars
+              {activeFixtureTitle}
             </p>
           </div>
         </div>
       </header>
 
+      {loadError ? (
+        <div className="border border-[#A31621]/30 bg-[#FCF7F8] px-4 py-3 text-sm text-[#A31621]">
+          {loadError}
+        </div>
+      ) : null}
+
       {/* Snapshot Cards */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard 
           label="Total Balance" 
-          value={formatPKR(walletSnapshot.totalBalance)} 
+          value={formatPKR(currentWalletSnapshot.totalBalance)} 
           accent="blue" 
           icon={<ShieldCheck className="w-4 h-4" />} 
         />
         <StatCard 
           label="Escrow Locked" 
-          value={formatPKR(walletSnapshot.escrowed)} 
+          value={formatPKR(currentWalletSnapshot.escrowed)} 
           accent="red" 
           icon={<Activity className="w-4 h-4" />} 
         />
         <StatCard 
           label="Available Liquidity" 
-          value={formatPKR(walletSnapshot.available)} 
+          value={formatPKR(currentWalletSnapshot.available)} 
           accent="slate" 
           icon={<Zap className="w-4 h-4" />} 
         />
         <StatCard
           label="Season Cap"
-          value={formatPKR(walletSnapshot.seasonBudgetCap)}
+          value={`${formatPKR(currentWalletSnapshot.seasonBudgetCap)} (${utilizationPct}% used)`}
           accent="blue"
           icon={<TrendingUp className="w-4 h-4" />}
         />
@@ -189,7 +313,7 @@ export default function BrandDashboardPage() {
 
           <div className="grid gap-3 flex-1">
             <Link
-              href="/brand/matches/m1"
+              href={activeMatchLink}
               className="group flex flex-col bg-[#A31621] p-5 transition-all hover:bg-[#8a121c] justify-between items-start h-24"
             >
               <Radio className="w-5 h-5 text-white/80" />
@@ -209,7 +333,7 @@ export default function BrandDashboardPage() {
   );
 }
 
-function StatCard({ label, value, accent, icon }: { label: string; value: string; accent: "blue" | "red" | "slate" | "neutral"; icon: React.ReactNode }) {
+function StatCard({ label, value, accent, icon }: { label: string; value: string; accent: "blue" | "red" | "slate" | "neutral"; icon: ReactNode }) {
   const accentColors = {
     blue: "text-[#90C2E7]",
     red: "text-[#A31621]",

@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { BarChart3, Radio, Target, LogOut, Hexagon, Component, CircleDollarSign } from "lucide-react";
 import { clearDemoAuthSession, hasDemoAuthSession } from "@/lib/demoAuth";
+import { getCurrentUserContext } from "@/lib/broadcasterApi";
 
 type NavItem = {
   href: string;
@@ -23,11 +24,40 @@ const navItems: NavItem[] = [
 export default function BroadcasterShellClient({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const [broadcasterLabel, setBroadcasterLabel] = useState("Broadcaster");
+  const [badgeText, setBadgeText] = useState("AUTHORIZED");
+
+  const initials = broadcasterLabel
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "BC";
 
   useEffect(() => {
     if (!hasDemoAuthSession("broadcaster_owner")) {
       router.replace("/");
+      return;
     }
+
+    let isMounted = true;
+    void getCurrentUserContext()
+      .then((context) => {
+        if (!isMounted) {
+          return;
+        }
+
+        const nextLabel = context.org?.name || context.user.username || "Broadcaster";
+        setBroadcasterLabel(nextLabel);
+        setBadgeText((context.user.role || "authorized").replace(/_/g, " ").toUpperCase());
+      })
+      .catch(() => {
+        // Keep fallback identity when profile lookup fails.
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, [router]);
 
   return (
@@ -74,11 +104,11 @@ export default function BroadcasterShellClient({ children }: { children: ReactNo
           <div className="border-t border-[#CED3DC] bg-[#FCF7F8]">
             <div className="flex items-center gap-3 px-6 py-5">
               <div className="h-8 w-8 bg-white flex items-center justify-center border border-[#CED3DC]">
-                <span className="text-[#4E8098] font-semibold text-[10px]">PT</span>
+                <span className="text-[#4E8098] font-semibold text-[10px]">{initials}</span>
               </div>
               <div className="flex flex-col">
-                <span className="text-xs font-semibold text-[#1a1a1a] uppercase tracking-wider">PTV Sports</span>
-                <span className="text-[10px] tracking-wider text-[#A31621] font-mono font-semibold">NETWORK ADMIN</span>
+                <span className="text-xs font-semibold text-[#1a1a1a] uppercase tracking-wider">{broadcasterLabel}</span>
+                <span className="text-[10px] tracking-wider text-[#A31621] font-mono font-semibold">{badgeText}</span>
               </div>
             </div>
             <Link

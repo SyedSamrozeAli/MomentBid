@@ -1,5 +1,24 @@
 import type { NextConfig } from "next";
 
+const isDevelopment = process.env.NODE_ENV === "development";
+const backendApiOrigin = (process.env.BACKEND_API_ORIGIN ?? "http://localhost:8000").replace(/\/+$/, "");
+
+function getOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+const explicitApiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL
+  ? getOrigin(process.env.NEXT_PUBLIC_API_BASE_URL)
+  : null;
+
+const developmentConnectSources = isDevelopment
+  ? [backendApiOrigin, explicitApiOrigin].filter((value): value is string => Boolean(value)).join(" ")
+  : "";
+
 const contentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -8,13 +27,22 @@ const contentSecurityPolicy = [
   "object-src 'none'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
-  "connect-src 'self' https: ws: wss:",
+  `connect-src 'self' https: ws: wss:${developmentConnectSources ? ` ${developmentConnectSources}` : ""}`,
   "frame-ancestors 'none'",
   "form-action 'self'",
-  "upgrade-insecure-requests",
+  ...(!isDevelopment ? ["upgrade-insecure-requests"] : []),
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: `${backendApiOrigin}/api/:path*`,
+      },
+    ];
+  },
+
   async headers() {
     return [
       {

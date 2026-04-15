@@ -23,7 +23,11 @@ export default function Home() {
 
     try {
       const result = await loginWithCredentials(username, password);
-      router.replace(result.redirectPath);
+      const redirectPath =
+        typeof result.redirectPath === "string" && result.redirectPath.startsWith("/")
+          ? result.redirectPath
+          : "/";
+      router.replace(redirectPath);
     } catch (authError) {
       setError(getAuthErrorMessage(authError));
     } finally {

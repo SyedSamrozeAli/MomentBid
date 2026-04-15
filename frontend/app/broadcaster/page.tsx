@@ -1,14 +1,34 @@
+"use client";
+
 import Link from "next/link";
 import { ArrowRight, Activity, TrendingUp, Radio, ShieldCheck, Component } from "lucide-react";
+import { useEffect, useState } from "react";
 
-const broadcasterSnapshot = {
+import { BroadcasterApiError, getBroadcasterDashboard, listMatchBids, listMatches } from "@/lib/broadcasterApi";
+
+type BroadcasterSnapshot = {
+  totalEarnings: number;
+  upcomingMatches: number;
+  activeAuctions: number;
+  activeBidders: number;
+};
+
+type RecentMatch = {
+  id: string;
+  title: string;
+  status: "CREATED" | "OPEN" | "ACTIVE" | "COMPLETED" | "CANCELLED";
+  bids: number;
+  revenue: number;
+};
+
+const fallbackBroadcasterSnapshot: BroadcasterSnapshot = {
   totalEarnings: 8450000,
   upcomingMatches: 3,
   activeAuctions: 1,
   activeBidders: 24,
 };
 
-const recentMatches = [
+const fallbackRecentMatches: RecentMatch[] = [
   { id: "m1", title: "Karachi Kings vs Lahore Qalandars", status: "ACTIVE", bids: 42, revenue: 1200000 },
   { id: "m2", title: "Islamabad United vs Multan Sultans", status: "OPEN", bids: 18, revenue: 0 },
   { id: "m4", title: "Quetta Gladiators vs Peshawar Zalmi", status: "COMPLETED", bids: 56, revenue: 3450000 },
@@ -22,7 +42,112 @@ function formatPKR(amount: number) {
   }).format(amount);
 }
 
+function parseAmount(value: string): number {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.round(parsed);
+}
+
+function matchStateToStatus(state: number): RecentMatch["status"] {
+  if (state === 1) {
+    return "OPEN";
+  }
+  if (state === 2) {
+    return "ACTIVE";
+  }
+  if (state === 3) {
+    return "COMPLETED";
+  }
+  if (state === 4) {
+    return "CANCELLED";
+  }
+  return "CREATED";
+}
+
 export default function BroadcasterDashboardPage() {
+  const [broadcasterSnapshot, setBroadcasterSnapshot] = useState<BroadcasterSnapshot>(fallbackBroadcasterSnapshot);
+  const [recentMatches, setRecentMatches] = useState<RecentMatch[]>(fallbackRecentMatches);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDashboard(): Promise<void> {
+      setLoadError("");
+
+      try {
+        const [dashboard, matches] = await Promise.all([getBroadcasterDashboard(), listMatches()]);
+        if (!isMounted) {
+          return;
+        }
+
+        const broadcasterMatches = matches.filter((match) => match.broadcaster === dashboard.broadcaster_name);
+        const upcomingMatches = broadcasterMatches.filter((match) => match.state === 0).length;
+
+        const recentCandidates = broadcasterMatches
+          .slice()
+          .sort((a, b) => (a.match_date < b.match_date ? 1 : a.match_date > b.match_date ? -1 : 0))
+          .slice(0, 3);
+
+        const bidResults = await Promise.allSettled(recentCandidates.map((match) => listMatchBids(match.id)));
+        if (!isMounted) {
+          return;
+        }
+
+        const hasBidData = bidResults.some((result) => result.status === "fulfilled");
+
+        const activeBidderSet = new Set<string>();
+        const mappedRecent = recentCandidates.map((match, index) => {
+          const result = bidResults[index];
+          const bids = result.status === "fulfilled" ? result.value : [];
+
+          for (const bid of bids) {
+            if (bid.brand) {
+              activeBidderSet.add(bid.brand);
+            }
+          }
+
+          const totalBids = bids.length;
+          const bidValue = bids.reduce((sum, bid) => sum + parseAmount(bid.amount), 0);
+
+          return {
+            id: String(match.id),
+            title: `${match.team_a} vs ${match.team_b}`,
+            status: matchStateToStatus(match.state),
+            bids: totalBids,
+            revenue: bidValue,
+          };
+        });
+
+        setBroadcasterSnapshot((prev) => ({
+          ...prev,
+          totalEarnings: parseAmount(dashboard.total_earnings),
+          upcomingMatches,
+          activeAuctions: dashboard.active_matches,
+          activeBidders: hasBidData ? activeBidderSet.size : prev.activeBidders,
+        }));
+
+        setRecentMatches(mappedRecent.length ? mappedRecent : fallbackRecentMatches);
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        const message = error instanceof BroadcasterApiError ? error.message : "Unable to load broadcaster dashboard.";
+        setLoadError(message);
+      }
+    }
+
+    void loadDashboard();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   return (
     <div className="flex flex-col space-y-10 pb-10">
       
@@ -39,6 +164,12 @@ export default function BroadcasterDashboardPage() {
           </p>
         </div>
       </header>
+
+      {loadError ? (
+        <div className="border border-[#A31621]/30 bg-white p-4 text-xs font-semibold uppercase tracking-widest text-[#A31621]">
+          {loadError}
+        </div>
+      ) : null}
 
       {/* Snapshot Cards */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
