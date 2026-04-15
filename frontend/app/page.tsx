@@ -3,37 +3,40 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Asterisk, Play } from "lucide-react";
-import { setDemoAuthSession } from "@/lib/demoAuth";
+import { getAuthErrorMessage, getHomeRouteForCurrentSession, loginWithCredentials } from "@/lib/demoAuth";
 
 export default function Home() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [platforms, setPlatforms] = useState<{ z: number; color: string; duration: number; delay: number }[]>([]);
   const router = useRouter();
 
-  const handleAuthorizeLogin = () => {
+  const handleAuthorizeLogin = async () => {
+    if (isSubmitting) {
+      return;
+    }
+
     setError("");
-    if (username === "kababjees" && password === "123") {
-      setDemoAuthSession(username);
-      router.replace("/brand");
-      return;
-    }
+    setIsSubmitting(true);
 
-    if (username === "walee" && password === "123") {
-      setDemoAuthSession(username);
-      router.replace("/broadcaster");
-      return;
+    try {
+      const result = await loginWithCredentials(username, password);
+      router.replace(result.redirectPath);
+    } catch (authError) {
+      setError(getAuthErrorMessage(authError));
+    } finally {
+      setIsSubmitting(false);
     }
-
-    if (username === "admin" && password === "123") {
-      setDemoAuthSession(username);
-      router.replace("/admin");
-      return;
-    }
-
-    setError("Invalid credentials. Use kababjees, walee, or admin with password 123.");
   };
+
+  useEffect(() => {
+    const route = getHomeRouteForCurrentSession();
+    if (route) {
+      router.replace(route);
+    }
+  }, [router]);
 
   // Generate an abstract field of floating energy platforms
   useEffect(() => {

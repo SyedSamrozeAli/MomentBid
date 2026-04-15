@@ -25,7 +25,7 @@ export default function BroadcasterShellClient({ children }: { children: ReactNo
   const router = useRouter();
 
   useEffect(() => {
-    if (!hasDemoAuthSession()) {
+    if (!hasDemoAuthSession("broadcaster_owner")) {
       router.replace("/");
     }
   }, [router]);

@@ -27,7 +27,7 @@ export default function BrandShellClient({ children }: { children: ReactNode }) 
   const router = useRouter();
 
   useEffect(() => {
-    if (!hasDemoAuthSession()) {
+    if (!hasDemoAuthSession("brand_owner")) {
       router.replace("/");
     }
   }, [router]);

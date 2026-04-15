@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { Activity, Bell, LayoutDashboard, LogOut, Code, AlertTriangle, ShieldAlert, Cpu } from "lucide-react";
+import { clearDemoAuthSession, getCurrentAuthUser, hasDemoAuthSession } from "@/lib/demoAuth";
 
 export default function AdminShellClient({ children }: { children: React.ReactNode }) {
   // Navigation Shell State
@@ -12,11 +13,16 @@ export default function AdminShellClient({ children }: { children: React.ReactNo
   const pathname = usePathname();
 
   useEffect(() => {
-    const s = sessionStorage.getItem("momentbid_brand_user");
-    if (!s || s !== "admin") {
+    if (!hasDemoAuthSession("admin")) {
       router.replace("/");
+      return;
+    }
+
+    const user = getCurrentAuthUser();
+    if (user) {
+      setSession(user.username);
     } else {
-      setSession(s);
+      setSession("admin");
     }
   }, [router]);
 
@@ -25,7 +31,7 @@ export default function AdminShellClient({ children }: { children: React.ReactNo
   }
 
   const handleLogout = () => {
-    sessionStorage.removeItem("momentbid_brand_user");
+    clearDemoAuthSession();
     router.replace("/");
   };
 
