@@ -1,0 +1,25 @@
+{
+  "name": "momentbid-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MomentBid smart contracts workspace",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "node": "hardhat node",
+    "deploy:local": "hardhat ignition deploy ignition/modules/deploy.js --network localhost",
+    "deploy:wirefluid": "hardhat ignition deploy ignition/modules/deploy.js --network wirefluid",
+    "grant:roles:local": "hardhat run scripts/grantRoles.js --network localhost",
+    "grant:roles:wirefluid": "hardhat run scripts/grantRoles.js --network wirefluid",
+    "demo:flow": "hardhat run scripts/demoFullFlow.js",
+    "demo:flow:local": "hardhat run scripts/demoFullFlow.js --network localhost"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.24.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.1.0"
+  }
+}
